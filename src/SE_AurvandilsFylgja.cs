@@ -219,7 +219,7 @@ namespace StandsOfValheim
             if (effect is SE_Stats stats)
             {
                 stats.m_addMaxCarryWeight = 100f;
-                stats.m_staminaRegenMultiplier = 1.3f;
+                stats.m_staminaRegenMultiplier = 1f;
             }
 
             if (effect is SE_AurvandilsFylgja af)
