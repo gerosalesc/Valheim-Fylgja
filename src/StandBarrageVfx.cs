@@ -9,9 +9,10 @@ namespace StandsOfValheim
     /// </summary>
     internal sealed class StandBarrageVfx
     {
-        private sealed class VfxSlot
+        public sealed class VfxSlot
         {
             public GameObject Go;
+            public MeshFilter Filter;
             public MeshRenderer Renderer;
             public bool IsRing;
             public bool Active;
@@ -31,6 +32,13 @@ namespace StandsOfValheim
         private static Material s_magentaFistMat;
         private static Material s_shockRingMat;
 
+        public static void InvalidateMaterials()
+        {
+            s_violetFistMat = null;
+            s_magentaFistMat = null;
+            s_shockRingMat = null;
+        }
+
         private readonly GameObject _poolRoot;
         private readonly List<VfxSlot> _slots = new List<VfxSlot>(FistPoolLimit + RingPoolLimit);
         private int _spawnCounter = 0;
@@ -46,10 +54,13 @@ namespace StandsOfValheim
             if (_poolRoot == null || standTransform == null) return;
 
             int sideSign = (_spawnCounter & 1) == 0 ? -1 : 1;
-            Material mat = (_spawnCounter & 1) == 0 ? s_violetFistMat : s_magentaFistMat;
+            bool useCustom3D = Plugin.UseCustom3DModel;
+            Mesh fistMesh = useCustom3D ? (CustomValheimModelBuilder.GetBarrageFistMesh() ?? s_fistMesh) : s_fistMesh;
+            Material defaultMat = (_spawnCounter & 1) == 0 ? s_violetFistMat : s_magentaFistMat;
+            Material mat = useCustom3D ? (CustomValheimModelBuilder.GetBarrageFistMaterial() ?? defaultMat) : defaultMat;
             _spawnCounter++;
 
-            VfxSlot slot = AcquireSlot(isRing: false, FistPoolLimit, s_fistMesh, mat);
+            VfxSlot slot = AcquireSlot(isRing: false, FistPoolLimit, fistMesh, mat);
             if (slot == null) return;
 
             Vector3 fwd = standTransform.forward;
@@ -69,9 +80,12 @@ namespace StandsOfValheim
             slot.Age = 0f;
             slot.Lifetime = Random.Range(0.115f, 0.145f);
             slot.Velocity = dir * speed;
-            slot.PeakScale = new Vector3(scale, scale, scale * 1.45f);
+            slot.PeakScale = useCustom3D
+                ? new Vector3(scale * 0.92f, scale * 0.92f, scale * 1.15f)
+                : new Vector3(scale, scale, scale * 1.45f);
             slot.EndScale = Vector3.zero;
 
+            if (slot.Filter != null) slot.Filter.sharedMesh = fistMesh;
             slot.Renderer.sharedMaterial = mat;
             slot.Go.transform.SetPositionAndRotation(origin, Quaternion.LookRotation(dir, up));
             slot.Go.transform.localScale = slot.PeakScale * 0.35f;
@@ -180,6 +194,7 @@ namespace StandsOfValheim
                 var created = new VfxSlot
                 {
                     Go = go,
+                    Filter = go.GetComponent<MeshFilter>(),
                     Renderer = go.GetComponent<MeshRenderer>(),
                     IsRing = isRing
                 };
@@ -195,13 +210,20 @@ namespace StandsOfValheim
             if (s_fistMesh == null) s_fistMesh = BuildFlurryFistMesh();
             if (s_ringMesh == null) s_ringMesh = BuildShockRingMesh();
 
+            float vfxOpacity = Plugin.ModelOpacity < 0.99f
+                ? Mathf.Clamp(Plugin.ModelOpacity * 0.82f, 0.30f, 0.85f)
+                : 1.0f;
+
             if (s_violetFistMat == null)
             {
                 s_violetFistMat = StandEquipmentBuilder.CreateCrispMaterial(
                     new Color(0.62f, 0.24f, 0.96f, 1.0f),
                     metallic: 0.25f,
                     glossiness: 0.72f,
-                    new Color(0.85f, 0.28f, 1.45f));
+                    new Color(0.85f, 0.28f, 1.45f),
+                    customTexture: null,
+                    opacityOverride: vfxOpacity,
+                    useDepthPrepass: false);
             }
 
             if (s_magentaFistMat == null)
@@ -210,7 +232,10 @@ namespace StandsOfValheim
                     new Color(0.78f, 0.28f, 1.00f, 1.0f),
                     metallic: 0.30f,
                     glossiness: 0.76f,
-                    new Color(1.10f, 0.34f, 1.55f));
+                    new Color(1.10f, 0.34f, 1.55f),
+                    customTexture: null,
+                    opacityOverride: vfxOpacity,
+                    useDepthPrepass: false);
             }
 
             if (s_shockRingMat == null)
@@ -219,7 +244,10 @@ namespace StandsOfValheim
                     new Color(0.94f, 0.78f, 1.00f, 1.0f),
                     metallic: 0.15f,
                     glossiness: 0.85f,
-                    new Color(1.35f, 0.95f, 1.60f));
+                    new Color(1.35f, 0.95f, 1.60f),
+                    customTexture: null,
+                    opacityOverride: vfxOpacity,
+                    useDepthPrepass: false);
             }
         }
 

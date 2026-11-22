@@ -116,7 +116,7 @@ namespace StandsOfValheim
             return null;
         }
 
-        private static Texture2D LoadTextureResource(string embeddedSuffix, string texName, string[] diskCandidates)
+        internal static Texture2D LoadTextureResource(string embeddedSuffix, string texName, string[] diskCandidates)
         {
             try
             {

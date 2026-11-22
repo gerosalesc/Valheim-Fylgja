@@ -10,6 +10,18 @@
     <ManagedDir>$(ValheimDir)/valheim_Data/Managed</ManagedDir>
     <BepInExCore>$(ValheimDir)/BepInEx/core</BepInExCore>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <DebugType>portable</DebugType>
+    <DebugSymbols>true</DebugSymbols>
+    <Optimize>false</Optimize>
+    <!-- Set to false to skip copying the Debug build into BepInEx/plugins -->
+    <DeployToValheim Condition="'$(DeployToValheim)' == ''">true</DeployToValheim>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tools/**" />
+    <EmbeddedResource Remove="tools/**" />
+    <None Remove="tools/**" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <Reference Include="netstandard"><HintPath>$(ManagedDir)/netstandard.dll</HintPath><Private>false</Private></Reference>
@@ -30,5 +42,26 @@
     <EmbeddedResource Include="resources\ora_barrage.wav" />
     <EmbeddedResource Include="resources\icon_aurvandilsfylgja.png" />
     <EmbeddedResource Include="resources\bossstone_aurvandilsfylgja.png" />
+    <EmbeddedResource Include="resources\aurvandils_fylgja.obj" />
+    <EmbeddedResource Include="resources\aurvandils_fylgja_barrage_fist.obj" />
+    <EmbeddedResource Include="resources\aurvandils_fylgja_tex.png" />
+    <EmbeddedResource Include="resources\aurvandils_fylgja_emission.png" />
   </ItemGroup>
+  <!--
+    Debug builds: convert the pdb to the .mdb format Unity's Mono needs, then deploy dll + symbols into
+    BepInEx/plugins so the game (started from Rider) loads the exact build that has debug info.
+  -->
+  <Target Name="DeployDebugToValheim" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug' And '$(DeployToValheim)' == 'true' And Exists('$(ValheimDir)/BepInEx/plugins')">
+    <PropertyGroup>
+      <DotnetExe Condition="'$(DOTNET_HOST_PATH)' != ''">$(DOTNET_HOST_PATH)</DotnetExe>
+      <DotnetExe Condition="'$(DotnetExe)' == ''">dotnet</DotnetExe>
+      <MdbStagingDir>$(MSBuildProjectDirectory)/obj/mdb</MdbStagingDir>
+      <PluginsDir>$(ValheimDir)/BepInEx/plugins</PluginsDir>
+    </PropertyGroup>
+    <RemoveDir Directories="$(MdbStagingDir)" />
+    <Exec Command="&quot;$(DotnetExe)&quot; run --project &quot;$(MSBuildProjectDirectory)/tools/Pdb2Mdb&quot; -c Release -p:ValheimDir=&quot;$(ValheimDir)&quot; -- &quot;@(IntermediateAssembly->'%(FullPath)')&quot; &quot;$(MdbStagingDir)&quot;" />
+    <Copy SourceFiles="$(MdbStagingDir)/$(AssemblyName).dll;$(MdbStagingDir)/$(AssemblyName).dll.mdb" DestinationFolder="$(PluginsDir)" />
+    <Copy SourceFiles="@(IntermediateAssembly->'%(RelativeDir)%(Filename).pdb')" DestinationFolder="$(PluginsDir)" Condition="Exists('@(IntermediateAssembly->'%(RelativeDir)%(Filename).pdb')')" />
+    <Message Importance="high" Text="Deployed debug build of $(AssemblyName) (with .mdb) to $(PluginsDir)" />
+  </Target>
 </Project>

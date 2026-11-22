@@ -31,7 +31,24 @@ namespace StandsOfValheim
             bool builtVisual = false;
             try
             {
-                builtVisual = TryBuildAssetModel(root, follower, owner);
+                if (Plugin.UseCustom3DModel)
+                {
+                    builtVisual = CustomValheimModelBuilder.TryBuild(root, follower, owner);
+                    if (!builtVisual)
+                    {
+                        Plugin.Log?.LogWarning("AurvandilsFylgja: CustomValheim3D model failed, falling back to ClassicProcedural model.");
+                        builtVisual = TryBuildAssetModel(root, follower, owner);
+                    }
+                }
+                else
+                {
+                    builtVisual = TryBuildAssetModel(root, follower, owner);
+                    if (!builtVisual)
+                    {
+                        Plugin.Log?.LogWarning("AurvandilsFylgja: ClassicProcedural model failed, falling back to CustomValheim3D model.");
+                        builtVisual = CustomValheimModelBuilder.TryBuild(root, follower, owner);
+                    }
+                }
             }
             catch (Exception ex)
             {
@@ -61,6 +78,9 @@ namespace StandsOfValheim
             aura.intensity = 3.2f;
             aura.shadows = LightShadows.None;
             follower.Aura = aura;
+
+            // --- Rising Astral Levitation Motes ---
+            AttachFloatingAuraParticles(root);
 
             // --- Audio Source (ORA Barrage) ---
             var audioSource = root.AddComponent<AudioSource>();
@@ -144,10 +164,10 @@ namespace StandsOfValheim
             visual.transform.localPosition = Vector3.zero;
             visual.transform.localRotation = Quaternion.identity;
 
-            // Remove CharacterAnimEvent synchronously so Animator.Update/gpower never invokes Player RPCs or events
-            var animEvent = visual.GetComponent<CharacterAnimEvent>();
-            if (animEvent != null)
+            // Remove all CharacterAnimEvent components synchronously so Animator never invokes Player RPCs or crashes
+            foreach (var animEvent in visual.GetComponentsInChildren<CharacterAnimEvent>(true))
             {
+                if (animEvent == null) continue;
                 animEvent.enabled = false;
                 UnityEngine.Object.DestroyImmediate(animEvent);
             }
@@ -194,16 +214,23 @@ namespace StandsOfValheim
             StandEquipmentBuilder.EquipStandOutfit(visual, bodyModel, headBone, (bone, fallback) => FindBone(bodyModel, visual, bone, fallback));
 
             // 6. Apply spectral materials (translucent purple body, crisp gold circlet, black hair)
-            ApplySpectralStandMaterials(visual);
+            ApplySpectralStandMaterials(visual, follower);
 
-            // 7. Wire limb bones and animator to StandFollower, then settle pose & play OOB activation anim
+            // 7. Wire limb & leg bones and animator to StandFollower, then settle pose & play OOB activation anim
             follower.StandAnimator = animator;
-            follower.Head  = headBone;
-            follower.Torso = FindBone(bodyModel, visual, HumanBodyBones.Chest, "Chest") ?? visual.transform;
-            follower.ArmL  = FindBone(bodyModel, visual, HumanBodyBones.LeftLowerArm, "LeftArm");
-            follower.ArmR  = FindBone(bodyModel, visual, HumanBodyBones.RightLowerArm, "RightArm");
-            follower.FistL = FindBone(bodyModel, visual, HumanBodyBones.LeftHand, "LeftHand");
-            follower.FistR = FindBone(bodyModel, visual, HumanBodyBones.RightHand, "RightHand");
+            follower.Head      = headBone;
+            follower.Torso     = FindBone(bodyModel, visual, HumanBodyBones.Chest, "Chest") ?? visual.transform;
+            follower.Hips      = FindBone(bodyModel, visual, HumanBodyBones.Hips, "Hips");
+            follower.ArmL      = FindBone(bodyModel, visual, HumanBodyBones.LeftLowerArm, "LeftArm");
+            follower.ArmR      = FindBone(bodyModel, visual, HumanBodyBones.RightLowerArm, "RightArm");
+            follower.FistL     = FindBone(bodyModel, visual, HumanBodyBones.LeftHand, "LeftHand");
+            follower.FistR     = FindBone(bodyModel, visual, HumanBodyBones.RightHand, "RightHand");
+            follower.UpperLegL = FindBone(bodyModel, visual, HumanBodyBones.LeftUpperLeg, "LeftUpLeg");
+            follower.LowerLegL = FindBone(bodyModel, visual, HumanBodyBones.LeftLowerLeg, "LeftLeg");
+            follower.FootL     = FindBone(bodyModel, visual, HumanBodyBones.LeftFoot, "LeftFoot");
+            follower.UpperLegR = FindBone(bodyModel, visual, HumanBodyBones.RightUpperLeg, "RightUpLeg");
+            follower.LowerLegR = FindBone(bodyModel, visual, HumanBodyBones.RightLowerLeg, "RightLeg");
+            follower.FootR     = FindBone(bodyModel, visual, HumanBodyBones.RightFoot, "RightFoot");
 
             InitializeStandAnimator(animator, follower);
 
@@ -211,11 +238,13 @@ namespace StandsOfValheim
             return true;
         }
 
-        private static void InitializeStandAnimator(Animator animator, StandFollower follower)
+        internal static void InitializeStandAnimator(Animator animator, StandFollower follower)
         {
             if (animator == null) return;
 
             animator.enabled = true;
+            // Disable AnimationEvent dispatch (Speed, TrailOn, Hit, FootStep, GPower) on cloned visual
+            animator.fireEvents = false;
             // Re-pose bones every render frame so StandFollower.LateUpdate offsets never stack on a stale pose
             animator.updateMode = AnimatorUpdateMode.Normal;
             animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
@@ -296,7 +325,7 @@ namespace StandsOfValheim
             }
         }
 
-        private static void CleanExistingEquipment(GameObject visual)
+        internal static void CleanExistingEquipment(GameObject visual)
         {
             // Remove any beard objects in hierarchy
             foreach (var t in visual.GetComponentsInChildren<Transform>(true))
@@ -441,8 +470,175 @@ namespace StandsOfValheim
             return false;
         }
 
-        private static void ApplySpectralStandMaterials(GameObject visual)
+        private static Texture2D s_softMoteTexture;
+        private static Material s_softMoteMaterial;
+
+        private static void AttachFloatingAuraParticles(GameObject root)
         {
+            try
+            {
+                var moteObj = new GameObject("StandFloatMotes");
+                moteObj.transform.SetParent(root.transform, false);
+                moteObj.transform.localPosition = new Vector3(0f, 0.35f, 0f);
+
+                var ps = moteObj.AddComponent<ParticleSystem>();
+                var main = ps.main;
+                main.loop = true;
+                main.playOnAwake = true;
+                main.simulationSpace = ParticleSystemSimulationSpace.World;
+                main.startLifetime = new ParticleSystem.MinMaxCurve(1.0f, 1.85f);
+                main.startSpeed = new ParticleSystem.MinMaxCurve(0.28f, 0.65f);
+                main.startSize = new ParticleSystem.MinMaxCurve(0.06f, 0.14f);
+                main.startColor = new ParticleSystem.MinMaxGradient(
+                    new Color(0.72f, 0.38f, 1.00f, 0.65f),
+                    new Color(0.95f, 0.72f, 1.00f, 0.55f));
+                main.gravityModifier = -0.14f;
+                main.maxParticles = 32;
+
+                var emission = ps.emission;
+                emission.enabled = true;
+                emission.rateOverTime = 14f;
+
+                var shape = ps.shape;
+                shape.enabled = true;
+                shape.shapeType = ParticleSystemShapeType.ConeVolume;
+                shape.angle = 6f;
+                shape.radius = 0.42f;
+                shape.radiusThickness = 0.85f;
+                shape.length = 0.55f;
+                shape.rotation = new Vector3(-90f, 0f, 0f);
+
+                var vel = ps.velocityOverLifetime;
+                vel.enabled = true;
+                vel.space = ParticleSystemSimulationSpace.Local;
+                vel.y = new ParticleSystem.MinMaxCurve(0.25f, 0.55f);
+
+                var colOverLife = ps.colorOverLifetime;
+                colOverLife.enabled = true;
+                var grad = new Gradient();
+                grad.SetKeys(
+                    new[]
+                    {
+                        new GradientColorKey(new Color(0.68f, 0.32f, 1.00f), 0.0f),
+                        new GradientColorKey(new Color(0.92f, 0.70f, 1.00f), 0.55f),
+                        new GradientColorKey(new Color(0.55f, 0.22f, 0.95f), 1.0f),
+                    },
+                    new[]
+                    {
+                        new GradientAlphaKey(0.0f, 0.0f),
+                        new GradientAlphaKey(0.65f, 0.22f),
+                        new GradientAlphaKey(0.45f, 0.72f),
+                        new GradientAlphaKey(0.0f, 1.0f),
+                    });
+                colOverLife.color = new ParticleSystem.MinMaxGradient(grad);
+
+                var sizeOverLife = ps.sizeOverLifetime;
+                sizeOverLife.enabled = true;
+                var curve = new AnimationCurve(
+                    new Keyframe(0.0f, 0.35f),
+                    new Keyframe(0.30f, 1.0f),
+                    new Keyframe(1.0f, 0.15f));
+                sizeOverLife.size = new ParticleSystem.MinMaxCurve(1.0f, curve);
+
+                var psr = moteObj.GetComponent<ParticleSystemRenderer>();
+                if (psr != null)
+                {
+                    psr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    psr.receiveShadows = false;
+                    Material moteMat = GetSoftMoteMaterial();
+                    if (moteMat != null)
+                    {
+                        psr.sharedMaterial = moteMat;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"AurvandilsFylgja: Could not attach floating aura particles: {ex.Message}");
+            }
+        }
+
+        private static Material GetSoftMoteMaterial()
+        {
+            if (s_softMoteMaterial != null) return s_softMoteMaterial;
+
+            if (s_softMoteTexture == null)
+            {
+                const int sz = 32;
+                s_softMoteTexture = new Texture2D(sz, sz, TextureFormat.RGBA32, false)
+                {
+                    name = "AurvandilsFylgja_FloatMoteTex",
+                    wrapMode = TextureWrapMode.Clamp,
+                    filterMode = FilterMode.Bilinear
+                };
+                var px = new Color[sz * sz];
+                float half = (sz - 1) * 0.5f;
+                for (int y = 0; y < sz; y++)
+                {
+                    for (int x = 0; x < sz; x++)
+                    {
+                        float dx = (x - half) / half;
+                        float dy = (y - half) / half;
+                        float r = Mathf.Sqrt(dx * dx + dy * dy);
+                        float falloff = Mathf.Clamp01(1f - r);
+                        float glow = falloff * falloff * falloff;
+                        px[y * sz + x] = new Color(1f, 1f, 1f, glow);
+                    }
+                }
+                s_softMoteTexture.SetPixels(px);
+                s_softMoteTexture.Apply(false, false);
+            }
+
+            string[] candidateShaders =
+            {
+                "Custom/AlphaParticle",
+                "Particles/Standard Unlit",
+                "Legacy Shaders/Particles/Additive",
+                "Sprites/Default",
+                "UI/Default"
+            };
+            Shader sh = null;
+            foreach (var sname in candidateShaders)
+            {
+                var found = Shader.Find(sname);
+                if (found != null && found.isSupported)
+                {
+                    sh = found;
+                    break;
+                }
+            }
+            if (sh == null)
+            {
+                foreach (var loaded in Resources.FindObjectsOfTypeAll<Shader>())
+                {
+                    if (loaded != null && loaded.isSupported &&
+                        (loaded.name == "Custom/AlphaParticle" || loaded.name == "Sprites/Default"))
+                    {
+                        sh = loaded;
+                        break;
+                    }
+                }
+            }
+            if (sh == null) return null;
+
+            s_softMoteMaterial = new Material(sh)
+            {
+                name = "AurvandilsFylgja_FloatMoteMat",
+                mainTexture = s_softMoteTexture,
+                renderQueue = 3003
+            };
+            if (s_softMoteMaterial.HasProperty("_MainTex")) s_softMoteMaterial.SetTexture("_MainTex", s_softMoteTexture);
+            if (s_softMoteMaterial.HasProperty("_Color")) s_softMoteMaterial.SetColor("_Color", Color.white);
+            if (s_softMoteMaterial.HasProperty("_TintColor")) s_softMoteMaterial.SetColor("_TintColor", Color.white);
+            return s_softMoteMaterial;
+        }
+
+        private static void ApplySpectralStandMaterials(GameObject visual, StandFollower follower)
+        {
+            float opacity = Plugin.ModelOpacity;
+            bool translucent = opacity < 0.99f;
+            bool hasPrepass = StandEquipmentBuilder.GetDepthWriteMaterial() != null;
+
             var renderers = visual.GetComponentsInChildren<Renderer>(true);
             foreach (var r in renderers)
             {
@@ -450,24 +646,75 @@ namespace StandsOfValheim
                 r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 r.receiveShadows = false;
 
-                // Preserve dedicated opaque PBR materials built by StandEquipmentBuilder
+                // Preserve dedicated PBR materials built by StandEquipmentBuilder (already configured with spectral transparency)
                 if (HasNameInHierarchy(r.transform, visual.transform, "shoulderpad", "scarf", "glove", "boot", "loincloth", "belt", "kneepad", "hairmane"))
                 {
+                    if (translucent && follower != null)
+                    {
+                        var eqMats = r.materials;
+                        for (int m = 0; m < eqMats.Length; m++)
+                        {
+                            if (eqMats[m] != null && eqMats[m].renderQueue == StandEquipmentBuilder.SpectralTransparentQueue)
+                            {
+                                follower.RegisterSpectralMaterial(eqMats[m]);
+                            }
+                        }
+                        r.materials = eqMats;
+                    }
                     continue;
                 }
 
                 bool isHair = HasNameInHierarchy(r.transform, visual.transform, "hair");
                 bool isCirclet = HasNameInHierarchy(r.transform, visual.transform, "dverger", "circlet");
 
-                var mats = r.materials;
-                for (int i = 0; i < mats.Length; i++)
+                if (isCirclet && translucent)
                 {
-                    var mat = mats[i];
+                    var mats = r.materials;
+                    if (mats != null && mats.Length == 1 && mats[0] != null)
+                    {
+                        StandEquipmentBuilder.ApplyGoldTint(mats[0]);
+                        StandEquipmentBuilder.ApplyRendererSpectralMaterials(r, mats[0], opacity);
+                        follower?.RegisterSpectralMaterial(mats[0]);
+                        continue;
+                    }
+                }
+
+                if (!isHair && !isCirclet && translucent)
+                {
+                    // Swap ClassicProcedural body from Custom/Player (alpha-cutout skin mask) to Valheim's transparent
+                    // PBR shader ('Standard TwoSided') with solid-alpha purple texture so spectral translucency renders cleanly.
+                    Shader transparentShader = StandEquipmentBuilder.FindValheimTransparentShader();
+                    if (transparentShader != null)
+                    {
+                        var bodyMat = new Material(transparentShader)
+                        {
+                            name = "AurvandilsFylgja_ClassicSpectralBodyMat",
+                            mainTexture = StandEquipmentBuilder.CreateSolidTexture(StandPurple)
+                        };
+                        if (bodyMat.HasProperty("_MainTex")) bodyMat.SetTexture("_MainTex", bodyMat.mainTexture);
+                        if (bodyMat.HasProperty("_Metallic")) bodyMat.SetFloat("_Metallic", 0.14f);
+                        if (bodyMat.HasProperty("_Glossiness")) bodyMat.SetFloat("_Glossiness", 0.38f);
+                        if (bodyMat.HasProperty("_EmissionColor"))
+                        {
+                            bodyMat.SetColor("_EmissionColor", EmissionGlow);
+                            bodyMat.EnableKeyword("_EMISSION");
+                        }
+
+                        StandEquipmentBuilder.ApplySpectralTransparency(bodyMat, Color.white, opacity, hasDepthPrepass: hasPrepass);
+                        StandEquipmentBuilder.ApplyRendererSpectralMaterials(r, bodyMat, opacity);
+                        follower?.RegisterSpectralMaterial(bodyMat);
+                        continue;
+                    }
+                }
+
+                var fallbackMats = r.materials;
+                for (int i = 0; i < fallbackMats.Length; i++)
+                {
+                    var mat = fallbackMats[i];
                     if (mat == null) continue;
 
                     if (isHair)
                     {
-                        // Aurvandil's Fylgja's black hair: Crisp, opaque, jet black mane
                         mat.renderQueue = -1;
                         mat.color = HairColor;
                         if (mat.HasProperty("_SkinColor")) mat.SetColor("_SkinColor", HairColor);
@@ -481,7 +728,7 @@ namespace StandsOfValheim
                         continue;
                     }
 
-                    // Fylgja Body: keep Custom/Player in its native opaque G-buffer queue with alpha 1.0
+                    // Opaque mode (ModelOpacity == 1.0): keep Custom/Player in its native opaque G-buffer queue with alpha 1.0
                     // so Valheim's player cutout mask never shreds bare skin into holes.
                     mat.renderQueue = -1;
                     mat.color = StandPurple;
@@ -507,11 +754,11 @@ namespace StandsOfValheim
                         mat.EnableKeyword("_EMISSION");
                     }
                 }
-                r.materials = mats;
+                r.materials = fallbackMats;
             }
         }
 
-        private static Transform FindBone(SkinnedMeshRenderer smr, GameObject visual, HumanBodyBones boneId, string fallbackName)
+        internal static Transform FindBone(SkinnedMeshRenderer smr, GameObject visual, HumanBodyBones boneId, string fallbackName)
         {
             var anim = visual.GetComponent<Animator>();
             if (anim != null && anim.isHuman)

@@ -29,6 +29,19 @@ namespace StandsOfValheim
         private static Material s_leatherBlackMaterial;
         private static Material s_loinclothMaterial;
         private static Material s_hairMaterial;
+        private static Material s_depthWriteMaterial;
+
+        internal const int DepthPrepassQueue = 3001;
+        internal const int SpectralTransparentQueue = 3002;
+
+        public static void InvalidateMaterials()
+        {
+            s_goldMaterial = null;
+            s_scarfMaterial = null;
+            s_leatherBlackMaterial = null;
+            s_loinclothMaterial = null;
+            s_hairMaterial = null;
+        }
 
         public static void AttachAurvandilsFylgjaHair(GameObject visual, Transform headBone, Transform neckBone, GameObject circlet)
         {
@@ -75,7 +88,7 @@ namespace StandsOfValheim
             }
 
             Quaternion worldRot = Quaternion.LookRotation(headFwd, headUp);
-            var hairGo = CreateGearObject("StandHairMane", BuildAurvandilsFylgjaHairMesh(), GetHairMaterial());
+            var hairGo = CreateGearObject("StandHairMane", BuildAurvandilsFylgjaHairMesh(), GetHairMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, hairGo, headBone, hairAnchor, worldRot);
         }
 
@@ -164,7 +177,7 @@ namespace StandsOfValheim
             Quaternion worldRot = Quaternion.LookRotation(axisZ, axisY);
 
             // Anchor directly at upperArm shoulder joint; mesh curvature wraps flush over the deltoid cap
-            var go = CreateGearObject(isRight ? "StandShoulderPad_R" : "StandShoulderPad_L", BuildShoulderPadMesh(), GetGoldMaterial());
+            var go = CreateGearObject(isRight ? "StandShoulderPad_R" : "StandShoulderPad_L", BuildShoulderPadMesh(), GetGoldMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, go, upperArm, upperArm.position, worldRot);
         }
 
@@ -201,7 +214,7 @@ namespace StandsOfValheim
             scarfFwd.Normalize();
 
             Quaternion worldRot = Quaternion.LookRotation(scarfFwd, neckAxis);
-            var go = CreateGearObject("StandScarf", BuildScarfMesh(neckLen), GetScarfMaterial());
+            var go = CreateGearObject("StandScarf", BuildScarfMesh(neckLen), GetScarfMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, go, parent, neckAnchor, worldRot);
         }
 
@@ -239,7 +252,7 @@ namespace StandsOfValheim
             float fistLength = Mathf.Clamp(measuredPalmLen * 2.35f, 0.175f, 0.235f);
 
             Quaternion handWorldRot = Quaternion.LookRotation(forwardWorld, upHint);
-            var gloveGo = CreateGearObject(namePrefix + "_Fist", BuildGloveFistMesh(fistLength), GetLeatherBlackMaterial());
+            var gloveGo = CreateGearObject(namePrefix + "_Fist", BuildGloveFistMesh(fistLength), GetLeatherBlackMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, gloveGo, hand, hand.position, handWorldRot);
 
             // Forearm gauntlet wrist cuff overlapping cleanly at the wrist joint
@@ -251,7 +264,7 @@ namespace StandsOfValheim
                 armFwd.Normalize();
 
                 Quaternion cuffWorldRot = Quaternion.LookRotation(armFwd, armAxis);
-                var cuffGo = CreateGearObject(namePrefix + "_Cuff", BuildWristCuffMesh(0.135f), GetLeatherBlackMaterial());
+                var cuffGo = CreateGearObject(namePrefix + "_Cuff", BuildWristCuffMesh(0.135f), GetLeatherBlackMaterial(), applySpectralPrepass: true);
                 PlaceAnchoredPiece(visual, cuffGo, lowerArm, hand.position, cuffWorldRot);
             }
         }
@@ -271,7 +284,7 @@ namespace StandsOfValheim
 
             Quaternion shaftRot = Quaternion.LookRotation(shinFwd, shinUp);
             float shaftHeight = shinLen * 0.72f;
-            var shaftGo = CreateGearObject(namePrefix + "_Shaft", BuildBootShaftMesh(shaftHeight), GetLeatherBlackMaterial());
+            var shaftGo = CreateGearObject(namePrefix + "_Shaft", BuildBootShaftMesh(shaftHeight), GetLeatherBlackMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, shaftGo, lowerLeg, foot.position, shaftRot);
 
             // Boot foot & toe box on Foot (+Z forward toward toes, +Y up)
@@ -285,7 +298,7 @@ namespace StandsOfValheim
             float ankleHeight = Mathf.Clamp(visual.transform.InverseTransformPoint(foot.position).y, 0.065f, 0.130f);
 
             Quaternion footRot = Quaternion.LookRotation(footFwd, visual.transform.up);
-            var footGo = CreateGearObject(namePrefix + "_Foot", BuildBootFootMesh(toeTipZ, ankleHeight), GetLeatherBlackMaterial());
+            var footGo = CreateGearObject(namePrefix + "_Foot", BuildBootFootMesh(toeTipZ, ankleHeight), GetLeatherBlackMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, footGo, foot, foot.position, footRot);
         }
 
@@ -305,7 +318,7 @@ namespace StandsOfValheim
             kneeFwd.Normalize();
 
             Quaternion worldRot = Quaternion.LookRotation(kneeFwd, kneeUp);
-            var go = CreateGearObject(name, BuildKneePadMesh(), GetGoldMaterial());
+            var go = CreateGearObject(name, BuildKneePadMesh(), GetGoldMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, go, lowerLeg, lowerLeg.position, worldRot);
         }
 
@@ -358,7 +371,7 @@ namespace StandsOfValheim
             thighLen = Mathf.Clamp(thighLen, 0.32f, 0.48f);
 
             Quaternion worldRot = Quaternion.LookRotation(visual.transform.forward, visual.transform.up);
-            var go = CreateGearObject("StandLoincloth", BuildLoinclothMesh(halfHipSpan, hipToSpine, thighLen), GetLoinclothMaterial());
+            var go = CreateGearObject("StandLoincloth", BuildLoinclothMesh(halfHipSpan, hipToSpine, thighLen), GetLoinclothMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, go, parent, hipMid, worldRot);
         }
 
@@ -372,7 +385,7 @@ namespace StandsOfValheim
             ComputeHipMetrics(visual, hips, spine, leftThigh, rightThigh, out Transform parent, out Vector3 hipMid, out float halfHipSpan, out float hipToSpine, out _);
 
             Quaternion worldRot = Quaternion.LookRotation(visual.transform.forward, visual.transform.up);
-            var go = CreateGearObject("StandBelt", BuildGoldBeltMesh(halfHipSpan, hipToSpine), GetGoldMaterial());
+            var go = CreateGearObject("StandBelt", BuildGoldBeltMesh(halfHipSpan, hipToSpine), GetGoldMaterial(), applySpectralPrepass: true);
             PlaceAnchoredPiece(visual, go, parent, hipMid, worldRot);
         }
 
@@ -382,7 +395,7 @@ namespace StandsOfValheim
             return s > 0.01f ? s : 1f;
         }
 
-        internal static GameObject CreateGearObject(string name, Mesh mesh, Material material)
+        internal static GameObject CreateGearObject(string name, Mesh mesh, Material material, bool applySpectralPrepass = false)
         {
             var go = new GameObject(name);
             var mf = go.AddComponent<MeshFilter>();
@@ -391,6 +404,10 @@ namespace StandsOfValheim
             mr.sharedMaterial = material;
             mr.shadowCastingMode = ShadowCastingMode.Off;
             mr.receiveShadows = false;
+            if (applySpectralPrepass)
+            {
+                ApplyRendererSpectralMaterials(mr, material, Plugin.ModelOpacity);
+            }
             return go;
         }
 
@@ -462,11 +479,197 @@ namespace StandsOfValheim
         public static void ApplyGoldTint(Material mat)
         {
             if (mat == null) return;
+            float opacity = Plugin.ModelOpacity;
+            if (opacity < 0.99f)
+            {
+                Shader transpShader = FindValheimTransparentShader();
+                if (transpShader != null && mat.shader != transpShader)
+                {
+                    mat.shader = transpShader;
+                }
+            }
             // Low emission preserves HelmetDverger's native etched metal texture and normal map shading.
             ApplyMaterialProperties(mat, GoldCircletTint, metallic: 0.92f, glossiness: 0.78f, GoldEmission);
+            if (opacity < 0.99f)
+            {
+                ApplySpectralTransparency(mat, GoldCircletTint, opacity, hasDepthPrepass: GetDepthWriteMaterial() != null);
+            }
         }
 
-        private static Shader FindValheimOpaqueShader()
+        internal static Shader FindValheimTransparentShader()
+        {
+            // Custom/Creature is opaque/cutout-only in Valheim and has no alpha blend pass.
+            // Prefer Valheim's shipped PBR 'Standard TwoSided' (supports _MainTex, _BumpMap, _EmissionMap,
+            // _Metallic, _Glossiness, _ALPHAPREMULTIPLY_ON, and _Color.a), with always-included fallbacks.
+            string[] preferred =
+            {
+                "Standard TwoSided",
+                "Legacy Shaders/Transparent/Bumped Diffuse",
+                "Legacy Shaders/Transparent/Diffuse",
+                "Standard",
+                "Unlit/Transparent"
+            };
+
+            foreach (var targetName in preferred)
+            {
+                var sh = Shader.Find(targetName);
+                if (sh != null && sh.isSupported) return sh;
+            }
+
+            var loadedShaders = Resources.FindObjectsOfTypeAll<Shader>();
+            foreach (var targetName in preferred)
+            {
+                foreach (var sh in loadedShaders)
+                {
+                    if (sh != null && sh.isSupported && sh.name == targetName)
+                    {
+                        return sh;
+                    }
+                }
+            }
+
+            return FindValheimOpaqueShader();
+        }
+
+        internal static Material GetDepthWriteMaterial()
+        {
+            if (s_depthWriteMaterial != null) return s_depthWriteMaterial;
+
+            Shader depthShader = Shader.Find("Unlit/DepthWrite");
+            if (depthShader == null || !depthShader.isSupported)
+            {
+                foreach (var sh in Resources.FindObjectsOfTypeAll<Shader>())
+                {
+                    if (sh != null && sh.isSupported && sh.name == "Unlit/DepthWrite")
+                    {
+                        depthShader = sh;
+                        break;
+                    }
+                }
+            }
+
+            if (depthShader == null || !depthShader.isSupported) return null;
+
+            s_depthWriteMaterial = new Material(depthShader)
+            {
+                name = "AurvandilsFylgja_DepthPrepassMat",
+                mainTexture = Texture2D.whiteTexture,
+                renderQueue = DepthPrepassQueue
+            };
+            if (s_depthWriteMaterial.HasProperty("_MainTex")) s_depthWriteMaterial.SetTexture("_MainTex", Texture2D.whiteTexture);
+            if (s_depthWriteMaterial.HasProperty("_Cutoff")) s_depthWriteMaterial.SetFloat("_Cutoff", 0.0f);
+            return s_depthWriteMaterial;
+        }
+
+        /// <summary>
+        /// Configures Valheim's Custom/Creature (or Standard-compatible) material for clean spectral transparency
+        /// using the same premultiplied-alpha mode Valheim uses for Ghost_mat (_ALPHAPREMULTIPLY_ON),
+        /// preserving crisp specular/metallic edges and luminous _EmissionMap details.
+        /// When opacity >= 0.99f, configures pure opaque rendering.
+        /// </summary>
+        internal static void ApplySpectralTransparency(Material mat, Color baseRgb, float opacity, bool hasDepthPrepass)
+        {
+            if (mat == null) return;
+
+            float clampedOpacity = Mathf.Clamp(opacity, 0.20f, 1.00f);
+            if (clampedOpacity >= 0.99f)
+            {
+                Color opaque = new Color(baseRgb.r, baseRgb.g, baseRgb.b, 1.0f);
+                mat.color = opaque;
+                if (mat.HasProperty("_Color")) mat.SetColor("_Color", opaque);
+                if (mat.HasProperty("_Mode")) mat.SetFloat("_Mode", 0f);
+                if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)BlendMode.One);
+                if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)BlendMode.Zero);
+                if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", 1);
+                if (mat.HasProperty("_Cull")) mat.SetInt("_Cull", (int)CullMode.Back);
+                mat.DisableKeyword("_ALPHATEST_ON");
+                mat.DisableKeyword("_ALPHABLEND_ON");
+                mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+                mat.SetOverrideTag("RenderType", "");
+                mat.renderQueue = -1;
+                return;
+            }
+
+            Color translucent = new Color(baseRgb.r, baseRgb.g, baseRgb.b, clampedOpacity);
+            mat.color = translucent;
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", translucent);
+            if (mat.HasProperty("_Mode")) mat.SetFloat("_Mode", 3f); // Premultiplied Transparent (matches Ghost_mat)
+            if (mat.HasProperty("_SrcBlend")) mat.SetInt("_SrcBlend", (int)BlendMode.One);
+            if (mat.HasProperty("_DstBlend")) mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+            if (mat.HasProperty("_ZWrite")) mat.SetInt("_ZWrite", hasDepthPrepass ? 0 : 1);
+            if (mat.HasProperty("_Cull")) mat.SetInt("_Cull", (int)CullMode.Back);
+            mat.DisableKeyword("_ALPHATEST_ON");
+            mat.DisableKeyword("_ALPHABLEND_ON");
+            mat.EnableKeyword("_ALPHAPREMULTIPLY_ON");
+            mat.SetOverrideTag("RenderType", "Transparent");
+            mat.renderQueue = SpectralTransparentQueue;
+        }
+
+        /// <summary>
+        /// Duplicates a single-submesh Mesh into a 2-submesh Mesh where SubMesh 0 runs the Unlit/DepthWrite
+        /// pre-pass (renderQueue 3001) and SubMesh 1 runs the spectral transparent surface pass (renderQueue 3002),
+        /// eliminating internal back-face / limb overlap while keeping the outer silhouette silky translucent.
+        /// </summary>
+        internal static Mesh BuildDepthPrepassMesh(Mesh source)
+        {
+            if (source == null || source.subMeshCount != 1) return source;
+
+            try
+            {
+                Mesh copy = UnityEngine.Object.Instantiate(source);
+                copy.name = source.name + "_SpectralPrepass";
+                int[] tris = source.GetTriangles(0);
+                copy.subMeshCount = 2;
+                copy.SetTriangles(tris, 0, calculateBounds: false);
+                copy.SetTriangles(tris, 1, calculateBounds: false);
+                copy.bounds = source.bounds;
+                return copy;
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"StandEquipmentBuilder: BuildDepthPrepassMesh fallback: {ex.Message}");
+                return source;
+            }
+        }
+
+        internal static void ApplyRendererSpectralMaterials(Renderer renderer, Material transparentMat, float opacity)
+        {
+            if (renderer == null || transparentMat == null) return;
+
+            Material depthMat = opacity < 0.99f ? GetDepthWriteMaterial() : null;
+            if (depthMat != null)
+            {
+                if (renderer is SkinnedMeshRenderer smr && smr.sharedMesh != null && smr.sharedMesh.subMeshCount == 1)
+                {
+                    Mesh prepassMesh = BuildDepthPrepassMesh(smr.sharedMesh);
+                    if (prepassMesh != null && prepassMesh.subMeshCount == 2)
+                    {
+                        smr.sharedMesh = prepassMesh;
+                        smr.sharedMaterials = new[] { depthMat, transparentMat };
+                        return;
+                    }
+                }
+                else if (renderer is MeshRenderer mr)
+                {
+                    var mf = mr.GetComponent<MeshFilter>();
+                    if (mf != null && mf.sharedMesh != null && mf.sharedMesh.subMeshCount == 1)
+                    {
+                        Mesh prepassMesh = BuildDepthPrepassMesh(mf.sharedMesh);
+                        if (prepassMesh != null && prepassMesh.subMeshCount == 2)
+                        {
+                            mf.sharedMesh = prepassMesh;
+                            mr.sharedMaterials = new[] { depthMat, transparentMat };
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Fallback when opaque or if Unlit/DepthWrite wasn't found (transparentMat already uses _ZWrite = 1)
+            renderer.sharedMaterials = new[] { transparentMat };
+        }
+
+        internal static Shader FindValheimOpaqueShader()
         {
             // Never pick Unity's stripped "Standard", "Custom/Player" (cutout skin), or any particle/transparent shader.
             string[] preferred = { "Custom/Creature", "Custom/Piece" };
@@ -536,7 +739,7 @@ namespace StandsOfValheim
             return true;
         }
 
-        private static Texture2D CreateSolidTexture(Color color)
+        internal static Texture2D CreateSolidTexture(Color color)
         {
             var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false)
             {
@@ -544,7 +747,7 @@ namespace StandsOfValheim
                 wrapMode = TextureWrapMode.Clamp,
                 filterMode = FilterMode.Point
             };
-            tex.SetPixel(0, 0, color);
+            tex.SetPixel(0, 0, new Color(color.r, color.g, color.b, 1.0f));
             tex.Apply(false, false);
             return tex;
         }
@@ -625,14 +828,24 @@ namespace StandsOfValheim
             return tex;
         }
 
-        internal static Material CreateCrispMaterial(Color color, float metallic, float glossiness, Color emission, Texture2D customTexture = null)
+        internal static Material CreateCrispMaterial(
+            Color color,
+            float metallic,
+            float glossiness,
+            Color emission,
+            Texture2D customTexture = null,
+            float? opacityOverride = null,
+            bool useDepthPrepass = true)
         {
+            float opacity = opacityOverride ?? Plugin.ModelOpacity;
+            bool wantTransparent = opacity < 0.99f;
+
             Material mat = null;
-            Shader shader = FindValheimOpaqueShader();
+            Shader shader = wantTransparent ? FindValheimTransparentShader() : FindValheimOpaqueShader();
             if (shader != null)
             {
                 mat = new Material(shader);
-                Plugin.Log?.LogInfo($"StandEquipmentBuilder: Creating equipment material using shader '{shader.name}'.");
+                Plugin.Log?.LogInfo($"StandEquipmentBuilder: Creating equipment material using shader '{shader.name}' (opacity={opacity:0.00}).");
             }
             else
             {
@@ -647,6 +860,9 @@ namespace StandsOfValheim
                 // Texture already carries exact albedo tint; keep _Color white so both _MainTex*_Color
                 // shaders and texture-only shaders render vibrant true colors (never washed white).
                 ApplyMaterialProperties(mat, Color.white, metallic, glossiness, emission);
+
+                bool hasPrepass = useDepthPrepass && GetDepthWriteMaterial() != null;
+                ApplySpectralTransparency(mat, Color.white, opacity, hasDepthPrepass: hasPrepass);
             }
             return mat;
         }
