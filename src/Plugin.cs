@@ -17,7 +17,7 @@ namespace StandsOfValheim
     {
         public const string Guid = "grosales.StandsOfValheim";
         public const string Name = "Valheim Fylgja";
-        public const string Version = "0.2.0";
+        public const string Version = "0.2.1";
 
         internal static ManualLogSource Log;
         public static ConfigEntry<FylgjaModelStyle> ModelStyleConfig { get; private set; }

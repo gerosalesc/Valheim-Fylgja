@@ -1,6 +1,6 @@
 # Valheim Fylgja (`StandsOfValheim`)
 
-A **BepInEx** mod for **Valheim** (`v0.2.0`) that introduces summonable **Fylgja** astral guardian spirits integrated natively as **Forsaken Powers**. Currently featuring: **Aurvandil's Fylgja**.
+A **BepInEx** mod for **Valheim** (`v0.2.1`) that introduces summonable **Fylgja** astral guardian spirits integrated natively as **Forsaken Powers**. Currently featuring: **Aurvandil's Fylgja**.
 
 For step-by-step Windows setup, multiplayer rules, configuration, and in-game usage, see the [Installation & Usage Guide (INSTALL.md)](INSTALL.md).
 
@@ -22,8 +22,8 @@ For step-by-step Windows setup, multiplayer rules, configuration, and in-game us
 ## Features
 
 - **Deep North Sacrificial Stone & Ashlands Discovery Quest:**
-  - Registers `BossStone_AurvandilsFylgja` in `ZNetScene` and places the custom rune-carved sacrificial monolith at a **random walkable Deep North location** per world seed (removed from the Start Temple, with automatic cleanup of any legacy Start Temple stones on existing worlds).
-  - Explore **Lord Reto's Tomb** (`PlaceofMystery3`) in the **Ashlands** to find a glowing cosmic-violet **Astral Vegvisir** (`Vegvisir: Aurvandil's Fylgja`) inside the chamber—interacting with it pans your map north and pins the exact Deep North coordinates of the sacrificial monolith.
+  - Registers `BossStone_AurvandilsFylgja` in `ZNetScene` and places the custom rune-carved sacrificial monolith (with a violet cosmic beacon light) in an **open Deep North clearing** well away from trees, boulders, and ice ponds at a random walkable location per world seed (removed from the Start Temple, with automatic cleanup of any legacy Start Temple stones on existing worlds).
+  - Explore the deepest sanctuary of **Lord Reto's Tomb** (`PlaceofMystery3`) in the **Ashlands** (past Lord Reto) to find a 3D carved weathered-granite **Astral Vegvisir** (`Vegvisir: Aurvandil's Fylgja`) glowing with cosmic violet runes—interacting with it pans your map north and pins the exact Deep North coordinates of the sacrificial monolith.
   - Travel to the Deep North monolith, hang a **Fallen Valkyrie Trophy** (`TrophyFallenValkyrie`) on its hook, and interact with the glowing stone to claim **Aurvandil's Fylgja** (`GP_AurvandilsFylgja`).
 - **Spectral Transparency & Ethereal Floating Effect:**
   - Renders Aurvandil's Fylgja with depth-preserving **spectral PBR transparency** (`Unlit/DepthWrite` pre-pass + Valheim's `Standard TwoSided` premultiplied transparent pass, configurable via `[Visuals] ModelOpacity`, default `0.72`) so the guardian looks authentically ghostly with glowing eyes, amethyst forehead gem, and zero internal back-face bleed.
@@ -82,7 +82,7 @@ Enable the in-game console by adding `-console` to Valheim's Steam Launch Option
 | `fylgja_model classic` *(or `fylgja model classic`)* | Switches to the **`ClassicProcedural`** model, saves to config, and hot-swaps any active Fylgja live. |
 | `fylgja_model` *(or `fylgja model`)* | Toggles between **`CustomValheim3D`** and **`ClassicProcedural`** live in-game. |
 | `fylgja_opacity <0.2-1.0>` *(or `fylgja opacity <val>`)* | Sets Aurvandil's Fylgja's spectral opacity live (`0.20` = very ghostly, `0.72` = default, `1.00` = fully opaque) and saves to config. |
-| `fylgja_stone [pin]` *(or `fylgja stone [pin]`)* | Prints the coordinates of Aurvandil's Fylgja's Deep North Sacrificial Stone and the nearest **Lord Reto's Tomb** (`PlaceofMystery3`); pass `pin` to register the Deep North pin on your map. |
+| `fylgja_stone [pin\|fix]` *(or `fylgja stone [pin\|fix]`)* | Prints the coordinates & live status of Aurvandil's Fylgja's Deep North Sacrificial Stone and the nearest **Lord Reto's Tomb** (`PlaceofMystery3`); pass `pin` to register the Deep North Boss pin or `fix` to re-ground/rescue it into an open clearing. |
 
 ---
 

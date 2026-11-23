@@ -53,7 +53,7 @@ Valheim requires **BepInEx** to load mods. Choose one of the two options below:
 
 ### Unlocking in Survival
 1. Journey to the **Ashlands** and locate **Lord Reto's Tomb** (the third Mysterious Location, `PlaceofMystery3`, discovered by following the Dyrnwyn Vegvisir chain).
-2. Enter Lord Reto's interior tomb chamber and look for the glowing cosmic-purple **Astral Vegvisir** (**`Vegvisir: Aurvandil's Fylgja`**).
+2. Enter Lord Reto's cavern and fight through to the deepest back sanctuary (past Lord Reto) to find the glowing 3D carved granite **Astral Vegvisir** (**`Vegvisir: Aurvandil's Fylgja`**).
 3. Interact (**`E`**) with the Vegvisir to pan your world map north and permanently pin the exact random **Deep North** location of **Aurvandil's Fylgja's Sacrificial Stone** *(the monolith is no longer placed at the Start Temple; any legacy Start Temple copy on existing worlds is automatically cleaned up)*.
 4. Sail to the pinned location in the **Deep North**, hang a **Fallen Valkyrie Trophy** (`TrophyFallenValkyrie`) on the monolith's hook, and interact with the glowing stone to claim **Aurvandil's Fylgja** as your active Forsaken Power.
 
