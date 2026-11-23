@@ -30,7 +30,8 @@ namespace StandsOfValheim
         private static GameObject s_stonePrefab;
         private static Mesh s_customStoneMesh;
         private static Material s_customStoneMaterial;
-        private static Mesh s_vegvisirMesh;
+        private static Mesh s_vegvisirStoneMesh;
+        private static Mesh s_vegvisirFallbackMesh;
         private static Material s_vegvisirMaterial;
         private static ZoneSystem.ZoneLocation s_virtualZoneLocation;
 
@@ -45,8 +46,8 @@ namespace StandsOfValheim
         private static System.Reflection.FieldInfo s_zdoDictField;
         private static float s_targetZoneFirstLoadedTime = -1f;
 
-        internal static readonly Color IdleEmissiveColor = new Color(0.26f, 0.18f, 0.36f, 1.0f);
-        internal static readonly Color ActiveEmissiveColor = new Color(0.52f, 0.34f, 0.68f, 1.0f);
+        internal static readonly Color IdleEmissiveColor = new Color(0.45f, 0.28f, 0.72f, 1.0f);
+        internal static readonly Color ActiveEmissiveColor = new Color(0.75f, 0.45f, 1.05f, 1.0f);
 
         public static void RegisterPrefab(ZNetScene zns)
         {
@@ -300,12 +301,27 @@ namespace StandsOfValheim
                     }
                 }
 
-                // Remove any legacy custom point light so only the vanilla BossStone active_effects aura is used
-                Transform frontLightTr = bossStone.transform.Find("AurvandilsFylgjaStoneLight") ??
-                                         bossStone.transform.Find("StarPlatinumStoneLight");
-                if (frontLightTr != null)
+                // Clean up any legacy StarPlatinum light and attach a clear cosmic purple beacon light
+                // in front of the carving so the Deep North monolith stands out clearly in snow & blizzards.
+                Transform legacyLightTr = bossStone.transform.Find("StarPlatinumStoneLight");
+                if (legacyLightTr != null)
                 {
-                    UnityEngine.Object.Destroy(frontLightTr.gameObject);
+                    UnityEngine.Object.Destroy(legacyLightTr.gameObject);
+                }
+
+                Transform frontLightTr = bossStone.transform.Find("AurvandilsFylgjaStoneLight");
+                if (frontLightTr == null)
+                {
+                    var lightGo = new GameObject("AurvandilsFylgjaStoneLight");
+                    lightGo.transform.SetParent(bossStone.transform, false);
+                    Vector3 frontDir = new Vector3(0.212f, 0f, -1.004f).normalized;
+                    lightGo.transform.localPosition = frontDir * 2.15f + Vector3.up * 3.1f;
+                    var pt = lightGo.AddComponent<Light>();
+                    pt.type = LightType.Point;
+                    pt.color = new Color(0.72f, 0.32f, 1.0f);
+                    pt.range = 14.0f;
+                    pt.intensity = 2.6f;
+                    pt.shadows = LightShadows.None;
                 }
             }
             catch (Exception ex)
@@ -917,24 +933,55 @@ namespace StandsOfValheim
             if (ZNetScene.instance == null || ZoneSystem.instance == null || WorldGenerator.instance == null) return;
 
             EnsureCacheMatchesWorld();
-            if (ZNet.instance == null || ZNet.instance.IsServer())
+            bool isServer = ZNet.instance == null || ZNet.instance.IsServer();
+            if (isServer)
             {
                 SweepLegacyStartTempleStoneZdos();
             }
 
-            if (s_deepNorthStoneConfirmed) return;
             if (!TryResolveDeepNorthStonePosition(out Vector3 targetPos)) return;
 
             Vector2s targetZone = ZoneSystem.GetZone(targetPos);
-            if (!ZoneSystem.instance.IsZoneLoaded(targetZone))
+            bool zoneReady = ZoneSystem.instance.IsZoneLoaded(targetZone) &&
+                             ZoneSystem.instance.GetGroundHeight(targetPos, out _);
+            if (!zoneReady)
             {
                 s_targetZoneFirstLoadedTime = -1f;
                 return;
             }
 
+            if (s_deepNorthStoneConfirmed)
+            {
+                // When the player is near the Deep North stone in a fully loaded zone, verify the live
+                // monolith is actually present, above ground, and not engulfed by a Deep North POI (e.g. IcePond1).
+                if (Player.m_localPlayer != null &&
+                    Vector3.Distance(Player.m_localPlayer.transform.position, targetPos) <= 95f)
+                {
+                    BossStone liveStone = FindLiveDeepNorthStone();
+                    if (liveStone != null)
+                    {
+                        var afComp = liveStone.GetComponent<AurvandilsFylgjaBossStone>();
+                        if (afComp == null || !afComp.GroundVerified)
+                        {
+                            EnsureDeepNorthStoneGroundedAndClear(liveStone.gameObject);
+                        }
+                    }
+                    else if (isServer)
+                    {
+                        RegisterPrefab(ZNetScene.instance);
+                        if (!TryFindExistingDeepNorthStoneZdo(out _, true))
+                        {
+                            Plugin.Log?.LogWarning("SacrificialStoneManager: Deep North stone ZDO missing while zone is loaded — respawning cleanly on surface.");
+                            s_deepNorthStoneConfirmed = false;
+                            EnsureDeepNorthStoneSpawnedAt(targetPos);
+                        }
+                    }
+                }
+                return;
+            }
+
             // In Valheim dedicated-server multiplayer, the exploring client loads and owns the remote zone.
             // Wait a brief 1.5s sync grace window on clients so any existing ZDO from the server replicates first.
-            bool isServer = ZNet.instance == null || ZNet.instance.IsServer();
             if (!isServer)
             {
                 if (s_targetZoneFirstLoadedTime < 0f)
@@ -959,6 +1006,8 @@ namespace StandsOfValheim
         public static void OnZoneSpawned(Vector2s zoneID, ZoneSystem.SpawnMode mode)
         {
             if (ZNetScene.instance == null || ZoneSystem.instance == null || WorldGenerator.instance == null) return;
+            // Never spawn during Ghost pre-generation (which destroys the zone root/heightmap immediately)
+            if (mode == ZoneSystem.SpawnMode.Ghost) return;
 
             EnsureCacheMatchesWorld();
             if (s_deepNorthStoneConfirmed) return;
@@ -966,6 +1015,12 @@ namespace StandsOfValheim
 
             if (ZoneSystem.GetZone(targetPos) == zoneID)
             {
+                // Require the actual terrain heightmap collider to be present (locations & terrain already placed)
+                if (!ZoneSystem.instance.GetGroundHeight(targetPos, out _))
+                {
+                    return;
+                }
+
                 // Spawn immediately if server or if this peer is executing full first-time zone generation
                 bool isServer = ZNet.instance == null || ZNet.instance.IsServer();
                 if (isServer || mode == ZoneSystem.SpawnMode.Full)
@@ -973,6 +1028,320 @@ namespace StandsOfValheim
                     EnsureDeepNorthStoneSpawnedAt(targetPos);
                 }
             }
+        }
+
+        private static BossStone FindLiveDeepNorthStone()
+        {
+            if (WorldGenerator.instance == null) return null;
+            var allStones = UnityEngine.Object.FindObjectsByType<BossStone>(FindObjectsSortMode.None);
+            if (allStones == null) return null;
+            foreach (var stone in allStones)
+            {
+                if (stone != null && IsAurvandilsFylgjaStone(stone) &&
+                    WorldGenerator.instance.GetBiome(stone.transform.position) == Heightmap.Biome.DeepNorth)
+                {
+                    return stone;
+                }
+            }
+            return null;
+        }
+
+        private static bool IsDeepNorthSpotObstructed(
+            Vector3 groundPos,
+            GameObject ignoreStone,
+            float clearRadius,
+            float maxSlopeDelta,
+            out string reason)
+        {
+            reason = null;
+            if (groundPos.y < ZoneSystem.c_WaterLevel + 1.5f)
+            {
+                reason = $"underwater/shoreline (y={groundPos.y:0.0})";
+                return true;
+            }
+
+            // Require flat, walkable open terrain around the monolith footprint
+            if (maxSlopeDelta > 0f && ZoneSystem.instance != null)
+            {
+                const float SampleDist = 4.5f;
+                Vector3[] slopeOffsets =
+                {
+                    new Vector3( SampleDist, 0f, 0f),
+                    new Vector3(-SampleDist, 0f, 0f),
+                    new Vector3(0f, 0f,  SampleDist),
+                    new Vector3(0f, 0f, -SampleDist)
+                };
+                foreach (var off in slopeOffsets)
+                {
+                    Vector3 sp = groundPos + off;
+                    if (!ZoneSystem.instance.GetGroundHeight(sp, out float sh))
+                    {
+                        reason = "unloaded adjacent terrain";
+                        return true;
+                    }
+                    if (sh < ZoneSystem.c_WaterLevel + 1.0f || Mathf.Abs(sh - groundPos.y) > maxSlopeDelta)
+                    {
+                        reason = $"steep slope (delta={Mathf.Abs(sh - groundPos.y):0.0}m)";
+                        return true;
+                    }
+                }
+            }
+
+            int solidMask = GetCavernSolidLayerMask();
+            // Check both lower trunk/rock zone and upper tree-canopy zone so the monolith stands in an open clearing
+            Vector3[] checkCenters =
+            {
+                new Vector3(groundPos.x, groundPos.y + 2.2f, groundPos.z),
+                new Vector3(groundPos.x, groundPos.y + 6.5f, groundPos.z)
+            };
+
+            foreach (Vector3 checkCenter in checkCenters)
+            {
+                var cols = Physics.OverlapSphere(checkCenter, clearRadius, solidMask, QueryTriggerInteraction.Ignore);
+                if (cols == null) continue;
+                foreach (var col in cols)
+                {
+                    if (col == null || col.isTrigger) continue;
+                    if (col.GetComponentInParent<Heightmap>() != null) continue;
+                    if (ignoreStone != null && col.transform.IsChildOf(ignoreStone.transform)) continue;
+                    if (col.GetComponentInParent<Character>() != null) continue;
+
+                    bool isTree = col.GetComponentInParent<TreeBase>() != null ||
+                                  col.GetComponentInParent<TreeLog>() != null;
+                    bool isIcePond = col.gameObject.name.IndexOf("IcePond", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                     (col.transform.root != null &&
+                                      col.transform.root.name.IndexOf("IcePond", StringComparison.OrdinalIgnoreCase) >= 0);
+
+                    if (isTree)
+                    {
+                        reason = $"near tree '{col.transform.root.name}'";
+                        return true;
+                    }
+                    if (isIcePond)
+                    {
+                        reason = $"near IcePond '{col.gameObject.name}'";
+                        return true;
+                    }
+                    if (col.bounds.max.y > groundPos.y + 0.75f)
+                    {
+                        reason = $"obstructed by '{col.gameObject.name}'";
+                        return true;
+                    }
+                }
+            }
+
+            // Verify nothing massive (glacier overhang, tree canopy, ruin arch) covers this spot from above
+            if (Physics.Raycast(new Vector3(groundPos.x, groundPos.y + 30f, groundPos.z), Vector3.down, out RaycastHit topHit, 29.2f, solidMask, QueryTriggerInteraction.Ignore))
+            {
+                if (topHit.collider != null &&
+                    topHit.collider.GetComponentInParent<Heightmap>() == null &&
+                    (ignoreStone == null || !topHit.collider.transform.IsChildOf(ignoreStone.transform)) &&
+                    topHit.collider.GetComponentInParent<Character>() == null)
+                {
+                    reason = $"covered overhead by '{topHit.collider.gameObject.name}'";
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool FindClearDeepNorthSurfaceSpot(Vector3 anchorPos, GameObject ignoreStone, out Vector3 clearPos)
+        {
+            clearPos = anchorPos;
+            // Search outward up to 56m in concentric rings across 3 strictness tiers:
+            //   Tier 1: Wide 7.5m open clearing away from trees, boulders, and IcePonds on flat snow (slope <= 2.2m)
+            //   Tier 2: Medium 5.0m clearing (slope <= 3.5m)
+            //   Tier 3: Tight 2.6m safety fallback if deeply forested
+            float[] radii = { 0f, 6f, 12f, 18f, 25f, 33f, 42f, 52f, 60f };
+            float[] clearRadii = { 7.5f, 5.0f, 2.6f };
+            float[] slopeLimits = { 2.2f, 3.5f, 5.5f };
+
+            for (int tier = 0; tier < clearRadii.Length; tier++)
+            {
+                float reqClear = clearRadii[tier];
+                float reqSlope = slopeLimits[tier];
+
+                foreach (float r in radii)
+                {
+                    int steps = r < 0.1f ? 1 : 12;
+                    for (int s = 0; s < steps; s++)
+                    {
+                        float angle = (s * Mathf.PI * 2f) / steps;
+                        float cx = anchorPos.x + Mathf.Cos(angle) * r;
+                        float cz = anchorPos.z + Mathf.Sin(angle) * r;
+
+                        if (WorldGenerator.instance != null &&
+                            WorldGenerator.instance.GetBiome(cx, cz) != Heightmap.Biome.DeepNorth)
+                        {
+                            continue;
+                        }
+
+                        Vector3 cand = new Vector3(cx, anchorPos.y, cz);
+                        float h;
+                        if (!ZoneSystem.instance.GetGroundHeight(cand, out h))
+                        {
+                            continue;
+                        }
+
+                        if (!IsDeepNorthSpotObstructed(new Vector3(cx, h, cz), ignoreStone, reqClear, reqSlope, out _))
+                        {
+                            clearPos = new Vector3(cx, h - 0.14f, cz);
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: snap onto real surface height directly at anchorPos
+            if (ZoneSystem.instance.GetGroundHeight(anchorPos, out float fallbackY))
+            {
+                clearPos = new Vector3(anchorPos.x, fallbackY - 0.14f, anchorPos.z);
+                return true;
+            }
+            return false;
+        }
+
+        public static bool EnsureDeepNorthStoneGroundedAndClear(GameObject stoneObj, bool forceLog = false)
+        {
+            if (stoneObj == null || ZoneSystem.instance == null || WorldGenerator.instance == null) return false;
+            Vector3 pos = stoneObj.transform.position;
+            if (WorldGenerator.instance.GetBiome(pos) != Heightmap.Biome.DeepNorth) return false;
+
+            // Ensure the real terrain heightmap is loaded before touching the stone
+            if (!ZoneSystem.instance.GetGroundHeight(pos, out float groundY))
+            {
+                return false;
+            }
+
+            var afComp = stoneObj.GetComponent<AurvandilsFylgjaBossStone>();
+            string reason = null;
+            bool needsRescue = false;
+
+            if (pos.y < groundY - 0.65f)
+            {
+                needsRescue = true;
+                reason = $"buried below terrain (stoneY={pos.y:0.0}, groundY={groundY:0.0})";
+            }
+            else if (pos.y > groundY + 0.65f)
+            {
+                needsRescue = true;
+                reason = $"floating above terrain (stoneY={pos.y:0.0}, groundY={groundY:0.0})";
+            }
+            else if (IsDeepNorthSpotObstructed(new Vector3(pos.x, groundY, pos.z), stoneObj, clearRadius: 6.5f, maxSlopeDelta: 3.0f, out string obsReason))
+            {
+                needsRescue = true;
+                reason = obsReason;
+            }
+
+            if (afComp != null) afComp.GroundVerified = true;
+
+            if (!needsRescue)
+            {
+                if (forceLog)
+                {
+                    Plugin.Log?.LogInfo($"SacrificialStoneManager: Deep North '{PrefabName}' verified in open clearing at ({pos.x:0.0}, {pos.y:0.0}, {pos.z:0.0}) [groundY={groundY:0.0}].");
+                }
+                return false;
+            }
+
+            if (!FindClearDeepNorthSurfaceSpot(pos, stoneObj, out Vector3 clearPos))
+            {
+                return false;
+            }
+
+            var nview = stoneObj.GetComponent<ZNetView>();
+            if (nview != null && nview.IsValid())
+            {
+                if (!nview.IsOwner()) nview.ClaimOwnership();
+                stoneObj.transform.position = clearPos;
+                ZDO zdo = nview.GetZDO();
+                if (zdo != null) zdo.SetPosition(clearPos);
+            }
+            else
+            {
+                stoneObj.transform.position = clearPos;
+            }
+
+            s_cachedStonePos = clearPos;
+            s_hasCachedStonePos = true;
+            s_deepNorthStoneConfirmed = true;
+
+            Plugin.Log?.LogInfo($"SacrificialStoneManager: Rescued Deep North '{PrefabName}' ({reason}) from ({pos.x:0.0}, {pos.y:0.0}, {pos.z:0.0}) to open snow clearing ({clearPos.x:0.0}, {clearPos.y:0.0}, {clearPos.z:0.0}).");
+            return true;
+        }
+
+        public static string GetDeepNorthStoneDiagnostics()
+        {
+            if (WorldGenerator.instance == null) return "WorldGenerator not ready.";
+            TryResolveDeepNorthStonePosition(out Vector3 targetPos);
+
+            BossStone live = FindLiveDeepNorthStone();
+            if (live != null)
+            {
+                Vector3 lp = live.transform.position;
+                float gy = 0f;
+                bool hasGround = ZoneSystem.instance != null && ZoneSystem.instance.GetGroundHeight(lp, out gy);
+                string gStr = hasGround ? $"groundY={gy:0.0}" : "groundY=unloaded";
+                bool vis = live.gameObject.activeInHierarchy && live.m_mesh != null && live.m_mesh.enabled;
+                return $"LIVE at ({lp.x:0.0}, {lp.y:0.0}, {lp.z:0.0}) [{gStr}, visible={vis}]";
+            }
+
+            if (TryFindExistingDeepNorthStoneZdo(out Vector3 zdoPos, true))
+            {
+                Vector2s z = ZoneSystem.GetZone(zdoPos);
+                bool loaded = ZoneSystem.instance != null && ZoneSystem.instance.IsZoneLoaded(z);
+                return $"ZDO persisted at ({zdoPos.x:0.0}, {zdoPos.y:0.0}, {zdoPos.z:0.0}) [zone={z}, loaded={loaded}]";
+            }
+
+            Vector2s tz = ZoneSystem.GetZone(targetPos);
+            bool tLoaded = ZoneSystem.instance != null && ZoneSystem.instance.IsZoneLoaded(tz);
+            return $"Pending spawn at ({targetPos.x:0.0}, {targetPos.y:0.0}, {targetPos.z:0.0}) [zone={tz}, loaded={tLoaded}]";
+        }
+
+        public static string ForceFixOrSpawnDeepNorthStone()
+        {
+            if (ZNetScene.instance == null || ZoneSystem.instance == null || WorldGenerator.instance == null)
+            {
+                return "World not loaded yet.";
+            }
+
+            RegisterPrefab(ZNetScene.instance);
+            if (!TryResolveDeepNorthStonePosition(out Vector3 targetPos))
+            {
+                return "Could not resolve Deep North target coordinates.";
+            }
+
+            BossStone live = FindLiveDeepNorthStone();
+            if (live != null)
+            {
+                var af = live.GetComponent<AurvandilsFylgjaBossStone>();
+                if (af != null) af.GroundVerified = false;
+                ConfigureStoneInstance(live.gameObject);
+                bool moved = EnsureDeepNorthStoneGroundedAndClear(live.gameObject, forceLog: true);
+                Vector3 lp = live.transform.position;
+                return moved
+                    ? $"Moved Deep North Sacrificial Stone to open clearing at ({lp.x:0.0}, {lp.y:0.0}, {lp.z:0.0})."
+                    : $"Deep North Sacrificial Stone is already live in an open clearing at ({lp.x:0.0}, {lp.y:0.0}, {lp.z:0.0}).";
+            }
+
+            Vector2s targetZone = ZoneSystem.GetZone(targetPos);
+            if (!ZoneSystem.instance.IsZoneLoaded(targetZone) || !ZoneSystem.instance.GetGroundHeight(targetPos, out _))
+            {
+                return $"Target zone {targetZone} at ({targetPos.x:0}, {targetPos.z:0}) is not loaded yet — travel there (or 'goto {targetPos.x:0} {targetPos.z:0}') and it will spawn automatically.";
+            }
+
+            s_deepNorthStoneConfirmed = false;
+            EnsureDeepNorthStoneSpawnedAt(targetPos);
+
+            BossStone after = FindLiveDeepNorthStone();
+            if (after != null)
+            {
+                Vector3 lp = after.transform.position;
+                return $"Spawned Deep North Sacrificial Stone in open clearing at ({lp.x:0.0}, {lp.y:0.0}, {lp.z:0.0}).";
+            }
+
+            return GetDeepNorthStoneDiagnostics();
         }
 
         public static bool DestroyDuplicateDeepNorthStoneIfNeeded(GameObject stoneObj)
@@ -1018,21 +1387,15 @@ namespace StandsOfValheim
             if (s_stonePrefab == null) return;
 
             // Check live BossStone instances first
-            var allStones = UnityEngine.Object.FindObjectsByType<BossStone>(FindObjectsSortMode.None);
-            if (allStones != null)
+            BossStone liveStone = FindLiveDeepNorthStone();
+            if (liveStone != null)
             {
-                foreach (var stone in allStones)
-                {
-                    if (stone != null && IsAurvandilsFylgjaStone(stone) &&
-                        WorldGenerator.instance.GetBiome(stone.transform.position) == Heightmap.Biome.DeepNorth)
-                    {
-                        ConfigureStoneInstance(stone.gameObject);
-                        s_cachedStonePos = stone.transform.position;
-                        s_hasCachedStonePos = true;
-                        s_deepNorthStoneConfirmed = true;
-                        return;
-                    }
-                }
+                ConfigureStoneInstance(liveStone.gameObject);
+                EnsureDeepNorthStoneGroundedAndClear(liveStone.gameObject);
+                s_cachedStonePos = liveStone.transform.position;
+                s_hasCachedStonePos = true;
+                s_deepNorthStoneConfirmed = true;
+                return;
             }
 
             // Double-check ZDOMan so we never duplicate across zone unload/reload
@@ -1044,59 +1407,11 @@ namespace StandsOfValheim
                 return;
             }
 
-            // Pick exact ground height & gently dodge any tree/boulder directly on targetPos
-            Vector3 bestPos = targetPos;
-            float groundY = targetPos.y;
-            bool foundClear = false;
-            Vector2[] offsets =
+            // Pick an unobstructed dry surface spot right around targetPos (avoiding IcePond1, boulders, and cliffs)
+            Vector3 bestPos;
+            if (!FindClearDeepNorthSurfaceSpot(targetPos, ignoreStone: null, out bestPos))
             {
-                Vector2.zero,
-                new Vector2(3.5f, 0f), new Vector2(-3.5f, 0f), new Vector2(0f, 3.5f), new Vector2(0f, -3.5f),
-                new Vector2(5.5f, 5.5f), new Vector2(-5.5f, 5.5f), new Vector2(5.5f, -5.5f), new Vector2(-5.5f, -5.5f)
-            };
-
-            foreach (var off in offsets)
-            {
-                Vector3 cand = new Vector3(targetPos.x + off.x, targetPos.y, targetPos.z + off.y);
-                float h;
-                if (!ZoneSystem.instance.GetGroundHeight(cand, out h))
-                {
-                    h = WorldGenerator.instance.GetHeight(cand.x, cand.z);
-                }
-                if (h < ZoneSystem.c_WaterLevel + 1.5f) continue;
-
-                Vector3 checkCenter = new Vector3(cand.x, h + 2.2f, cand.z);
-                bool blocked = false;
-                var cols = Physics.OverlapSphere(checkCenter, 1.85f);
-                if (cols != null)
-                {
-                    foreach (var col in cols)
-                    {
-                        if (col == null || col.isTrigger) continue;
-                        if (col.GetComponentInParent<Heightmap>() != null) continue;
-                        if (col.bounds.max.y > h + 0.6f)
-                        {
-                            blocked = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!blocked)
-                {
-                    bestPos = new Vector3(cand.x, h - 0.14f, cand.z);
-                    groundY = h;
-                    foundClear = true;
-                    break;
-                }
-            }
-
-            if (!foundClear)
-            {
-                if (!ZoneSystem.instance.GetGroundHeight(targetPos, out groundY))
-                {
-                    groundY = WorldGenerator.instance.GetHeight(targetPos.x, targetPos.z);
-                }
+                float groundY = WorldGenerator.instance.GetHeight(targetPos.x, targetPos.z);
                 bestPos = new Vector3(targetPos.x, groundY - 0.14f, targetPos.z);
             }
 
@@ -1106,15 +1421,7 @@ namespace StandsOfValheim
             if (toSouth.sqrMagnitude < 0.001f) toSouth = Vector3.back;
             toSouth.Normalize();
 
-            Vector3 localHookDir = new Vector3(0.212f, 0f, -1.004f).normalized;
-            var prefabStand = s_stonePrefab.GetComponentInChildren<ItemStand>(true);
-            if (prefabStand != null)
-            {
-                Vector3 localStand = s_stonePrefab.transform.InverseTransformPoint(prefabStand.transform.position);
-                localStand.y = 0f;
-                if (localStand.sqrMagnitude > 0.01f) localHookDir = localStand.normalized;
-            }
-
+            Vector3 localHookDir = GetBossStoneLocalFrontDirection();
             Quaternion bestRot = Quaternion.LookRotation(toSouth, Vector3.up) *
                                  Quaternion.Inverse(Quaternion.LookRotation(localHookDir, Vector3.up));
 
@@ -1167,6 +1474,37 @@ namespace StandsOfValheim
             }
         }
 
+        private static void EnsureStoneAssetsReady()
+        {
+            if (s_stonePrefab == null && ZNetScene.instance != null)
+            {
+                RegisterPrefab(ZNetScene.instance);
+            }
+            if (s_stonePrefab != null && s_customStoneMaterial == null)
+            {
+                ConfigureStoneInstance(s_stonePrefab);
+            }
+        }
+
+        private static Vector3 GetBossStoneLocalFrontDirection()
+        {
+            Vector3 localFrontDir = new Vector3(0.212f, 0f, -1.004f).normalized;
+            if (s_stonePrefab != null)
+            {
+                var prefabStand = s_stonePrefab.GetComponentInChildren<ItemStand>(true);
+                if (prefabStand != null)
+                {
+                    Vector3 localStand = s_stonePrefab.transform.InverseTransformPoint(prefabStand.transform.position);
+                    localStand.y = 0f;
+                    if (localStand.sqrMagnitude > 0.01f)
+                    {
+                        localFrontDir = localStand.normalized;
+                    }
+                }
+            }
+            return localFrontDir;
+        }
+
         private static void AttachVegvisirToLordRetoTomb(Location loc)
         {
             if (loc == null) return;
@@ -1216,25 +1554,117 @@ namespace StandsOfValheim
             Vector3 intoRoom = ResolveChamberForwardDirection(interior, interiorEntry, entryPos);
             Vector3 rightDir = Vector3.Cross(Vector3.up, intoRoom).normalized;
 
+            // Priority 1: Place the 3D carved Vegvisir stone free-standing in the deepest back sanctuary
+            // of Lord Reto's cavern (~30.5m deep from ExteriorGateway, ~6.4m behind Lord Reto, ~2.25m clear
+            // of the rear Ashlands ruin wall at Interior-local z = +32.75, centered at x = +1.25).
             Vector3 spawnPos;
-            if (!TryFindClearInteriorFloorSpot(entryPos, intoRoom, rightDir, out spawnPos))
+            bool placedInDeepSanctuary = TryFindDeepestSanctuarySpot(interior, entryPos.y, out spawnPos);
+            if (!placedInDeepSanctuary && !TryFindClearInteriorFloorSpot(entryPos, intoRoom, rightDir, out spawnPos))
             {
-                // Guaranteed unobstructed fallback just inside the tomb chamber
-                spawnPos = entryPos + intoRoom * 2.4f + rightDir * 1.3f;
-                if (Physics.Raycast(spawnPos + Vector3.up * 2.5f, Vector3.down, out RaycastHit fbHit, 6.0f, ~0, QueryTriggerInteraction.Ignore))
+                // Guaranteed unobstructed fallback in the deep back sanctuary
+                int solidMask = GetCavernSolidLayerMask();
+                Vector3 fallbackProbe = interior.TransformPoint(new Vector3(1.25f, 2.50f, 29.80f));
+                if (Physics.Raycast(fallbackProbe, Vector3.down, out RaycastHit fbHit, 9.0f, solidMask, QueryTriggerInteraction.Ignore))
                 {
                     spawnPos = fbHit.point;
                 }
+                else
+                {
+                    spawnPos = interior.TransformPoint(new Vector3(1.25f, -1.70f, 29.80f));
+                }
             }
 
-            // Face the glowing rune carving back toward the entrance so arriving players see it immediately
-            Vector3 lookDir = entryPos - spawnPos;
+            // Orient the glowing carved front face toward Lord Reto's boss chamber / approaching player
+            Vector3 lookTarget = placedInDeepSanctuary
+                ? interior.TransformPoint(new Vector3(-0.70f, 0f, 24.04f))
+                : entryPos;
+            Vector3 lookDir = lookTarget - spawnPos;
             lookDir.y = 0f;
             if (lookDir.sqrMagnitude < 0.01f) lookDir = -intoRoom;
             Quaternion spawnRot = Quaternion.LookRotation(lookDir.normalized, Vector3.up);
 
             GameObject vegvisirGo = BuildAstralVegvisirObject(interior, spawnPos, spawnRot);
-            Plugin.Log?.LogInfo($"SacrificialStoneManager: Placed '{VegvisirObjectName}' inside Lord Reto's Tomb ({loc.gameObject.name}) at {vegvisirGo.transform.position}.");
+            Plugin.Log?.LogInfo($"SacrificialStoneManager: Placed 3D stone '{VegvisirObjectName}' in the deepest chamber of Lord Reto's Tomb ({loc.gameObject.name}) at {vegvisirGo.transform.position}.");
+        }
+
+        private static bool TryFindDeepestSanctuarySpot(Transform interior, float entryY, out Vector3 floorPos)
+        {
+            floorPos = Vector3.zero;
+            if (interior == null) return false;
+
+            // Exact Interior-local sanctuary probes for PlaceofMystery3 (Lord Reto's Cavern):
+            //   ExteriorGateway: (0.00, -0.15, 0.00)
+            //   Lord Reto (Spawner_Charred_Dyrnwyn): (-0.70, -1.18, +24.04)
+            //   Rear ruin wall inner face: z = +32.75, x in [-4.75, +7.25] (center x = +1.25)
+            // Start raycast at y = +2.50 (well below the cavern vault, well above the y ~ -1.8 floor).
+            Vector3[] deepLocalCandidates =
+            {
+                new Vector3( 1.25f, 2.50f, 30.50f),
+                new Vector3( 1.25f, 2.50f, 29.50f),
+                new Vector3(-0.25f, 2.50f, 30.25f),
+                new Vector3( 2.75f, 2.50f, 30.25f),
+                new Vector3( 1.25f, 2.50f, 28.40f),
+                new Vector3(-1.50f, 2.50f, 29.20f),
+                new Vector3( 3.75f, 2.50f, 29.20f),
+                new Vector3( 0.50f, 2.50f, 27.20f),
+                new Vector3(-0.70f, 2.50f, 26.20f)
+            };
+
+            foreach (Vector3 localProbe in deepLocalCandidates)
+            {
+                Vector3 worldProbe = interior.TransformPoint(localProbe);
+                if (TryValidateCavernFloorSpot(worldProbe, entryY, 0.85f, out floorPos))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static int GetCavernSolidLayerMask()
+        {
+            return ~LayerMask.GetMask(
+                "character",
+                "character_net",
+                "character_ghost",
+                "character_noenv",
+                "character_trigger",
+                "hitbox",
+                "viewblock",
+                "Ignore Raycast");
+        }
+
+        private static bool TryValidateCavernFloorSpot(Vector3 rayOrigin, float entryY, float clearanceRadius, out Vector3 floorPos)
+        {
+            floorPos = Vector3.zero;
+            int solidMask = GetCavernSolidLayerMask();
+            if (!Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit floorHit, 9.0f, solidMask, QueryTriggerInteraction.Ignore))
+            {
+                return false;
+            }
+            if (floorHit.normal.y < 0.68f) return false;
+            if (Mathf.Abs(floorHit.point.y - entryY) > 4.5f) return false;
+
+            // Ensure the full 3D standing monolith stands free-standing without clipping walls or pillars
+            Vector3 bodyCenter = floorHit.point + Vector3.up * 1.30f;
+            var cols = Physics.OverlapSphere(bodyCenter, clearanceRadius, solidMask, QueryTriggerInteraction.Ignore);
+            if (cols != null)
+            {
+                foreach (var col in cols)
+                {
+                    if (col == null || col.isTrigger) continue;
+                    if (col == floorHit.collider) continue;
+                    if (col.GetComponentInParent<Character>() != null) continue;
+                    if (col.bounds.max.y > floorHit.point.y + 0.25f)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            floorPos = floorHit.point;
+            return true;
         }
 
         private static Vector3 ResolveChamberForwardDirection(Transform interior, Teleport interiorEntry, Vector3 entryPos)
@@ -1304,43 +1734,17 @@ namespace StandsOfValheim
         private static bool TryFindClearInteriorFloorSpot(Vector3 entryPos, Vector3 intoRoom, Vector3 rightDir, out Vector3 floorPos)
         {
             floorPos = Vector3.zero;
-            // Probe deeper spots first so the Vegvisir rests ceremonially inside Lord Reto's chamber (not blocking the doorway)
-            float[] forwardDists = { 8.5f, 7.0f, 5.5f, 10.0f, 4.2f, 3.0f };
-            float[] sideOffsets  = { 0.0f, 1.8f, -1.8f, 3.0f, -3.0f };
+            // Probe deepest cavern spots first so the Vegvisir stands at the far sanctuary behind Lord Reto
+            float[] forwardDists = { 30.5f, 29.0f, 27.5f, 25.5f, 22.0f, 18.0f, 14.0f, 10.0f };
+            float[] sideOffsets  = { 0.0f, 1.5f, -1.5f, 3.0f, -3.0f };
 
             foreach (float f in forwardDists)
             {
                 foreach (float s in sideOffsets)
                 {
-                    Vector3 probe = entryPos + intoRoom * f + rightDir * s;
-                    if (!Physics.Raycast(probe + Vector3.up * 3.0f, Vector3.down, out RaycastHit floorHit, 7.0f, ~0, QueryTriggerInteraction.Ignore))
+                    Vector3 probe = entryPos + intoRoom * f + rightDir * s + Vector3.up * 2.5f;
+                    if (TryValidateCavernFloorSpot(probe, entryPos.y, 0.85f, out floorPos))
                     {
-                        continue;
-                    }
-                    if (floorHit.normal.y < 0.72f) continue;
-                    if (Mathf.Abs(floorHit.point.y - entryPos.y) > 3.5f) continue;
-
-                    // Verify there is clear headroom and no pillar/wall directly intersecting the Vegvisir tablet
-                    Vector3 bodyCenter = floorHit.point + Vector3.up * 1.05f;
-                    bool blocked = false;
-                    var cols = Physics.OverlapSphere(bodyCenter, 0.58f, ~0, QueryTriggerInteraction.Ignore);
-                    if (cols != null)
-                    {
-                        foreach (var col in cols)
-                        {
-                            if (col == null || col.isTrigger) continue;
-                            if (col == floorHit.collider) continue;
-                            if (col.bounds.max.y > floorHit.point.y + 0.18f)
-                            {
-                                blocked = true;
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!blocked)
-                    {
-                        floorPos = floorHit.point;
                         return true;
                     }
                 }
@@ -1350,6 +1754,8 @@ namespace StandsOfValheim
 
         private static GameObject BuildAstralVegvisirObject(Transform parent, Vector3 worldPos, Quaternion worldRot)
         {
+            EnsureStoneAssetsReady();
+
             var go = new GameObject(VegvisirObjectName);
             go.transform.SetParent(parent, worldPositionStays: false);
             go.transform.position = worldPos;
@@ -1359,23 +1765,52 @@ namespace StandsOfValheim
             int pieceLayer = LayerMask.NameToLayer("piece");
             if (pieceLayer >= 0) go.layer = pieceLayer;
 
-            var mf = go.AddComponent<MeshFilter>();
-            mf.sharedMesh = GetAstralVegvisirMesh();
+            // Child 3D stone model matching vanilla Valheim Vegvisir hierarchy (Vegvisir on root, mesh + MeshCollider on Model)
+            var modelObj = new GameObject("Model");
+            modelObj.transform.SetParent(go.transform, worldPositionStays: false);
+            if (pieceLayer >= 0) modelObj.layer = pieceLayer;
 
-            var mr = go.AddComponent<MeshRenderer>();
-            mr.sharedMaterial = GetAstralVegvisirMaterial();
+            Mesh stoneMesh = GetAstralVegvisirStoneMesh(out bool isBossStoneMonolith);
+            if (isBossStoneMonolith)
+            {
+                Bounds b = stoneMesh.bounds;
+                const float TargetStoneHeight = 2.40f;
+                float stoneScale = TargetStoneHeight / Mathf.Max(0.5f, b.size.y);
+
+                Vector3 localFrontDir = GetBossStoneLocalFrontDirection();
+                Quaternion frontAlignRot = Quaternion.Inverse(Quaternion.LookRotation(localFrontDir, Vector3.up));
+                Vector3 pivotOffset = new Vector3(b.center.x, b.min.y, b.center.z) * stoneScale;
+                Vector3 rotatedOffset = frontAlignRot * pivotOffset;
+
+                modelObj.transform.localRotation = frontAlignRot;
+                modelObj.transform.localScale = Vector3.one * stoneScale;
+                // Sink rough stone base slightly (10cm) into the uneven cavern bedrock so it looks naturally planted
+                modelObj.transform.localPosition = new Vector3(-rotatedOffset.x, -rotatedOffset.y - 0.10f, -rotatedOffset.z);
+            }
+            else
+            {
+                modelObj.transform.localPosition = Vector3.zero;
+                modelObj.transform.localRotation = Quaternion.identity;
+                modelObj.transform.localScale = Vector3.one;
+            }
+
+            var mf = modelObj.AddComponent<MeshFilter>();
+            mf.sharedMesh = stoneMesh;
+
+            var mr = modelObj.AddComponent<MeshRenderer>();
+            mr.sharedMaterial = GetAstralVegvisirMaterial(isBossStoneMonolith);
             mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
             mr.receiveShadows = true;
 
-            var col = go.AddComponent<BoxCollider>();
-            col.center = new Vector3(0f, 0.78f, 0f);
-            col.size = new Vector3(0.76f, 1.56f, 0.38f);
+            var meshCol = modelObj.AddComponent<MeshCollider>();
+            meshCol.sharedMesh = stoneMesh;
+            meshCol.convex = false;
 
-            // Native Valheim Vegvisir component: interacting routes DiscoverClosestLocation("AurvandilsFylgjaStone")
-            // to the server and pans the player's map straight to the random Deep North Sacrificial Stone!
+            // Native Valheim Vegvisir component: Valheim concatenates m_name + " " + m_hoverName,
+            // so splitting them renders cleanly once as "Vegvisir: Aurvandil's Fylgja\n[E] Register location".
             var vegvisir = go.AddComponent<Vegvisir>();
-            vegvisir.m_name = "Vegvisir: Aurvandil's Fylgja";
-            vegvisir.m_hoverName = "Vegvisir: Aurvandil's Fylgja";
+            vegvisir.m_name = "Vegvisir:";
+            vegvisir.m_hoverName = "Aurvandil's Fylgja";
             vegvisir.m_useText = "$piece_register_location";
             vegvisir.m_hoverOffset = 0.25f;
             vegvisir.m_locations = new List<Vegvisir.VegvisrLocation>
@@ -1390,29 +1825,135 @@ namespace StandsOfValheim
                 }
             };
 
-            // Cosmic purple beacon light so the Vegvisir stands out clearly inside Lord Reto's dark Ashlands tomb
+            // Cosmic purple beacon light illuminating the carved front face of the 3D granite Vegvisir
             var lightObj = new GameObject("AstralVegvisirLight");
             lightObj.transform.SetParent(go.transform, false);
-            lightObj.transform.localPosition = new Vector3(0f, 1.05f, 0.45f);
+            lightObj.transform.localPosition = new Vector3(0f, 1.35f, 0.85f);
             var light = lightObj.AddComponent<Light>();
             light.type = LightType.Point;
             light.color = new Color(0.74f, 0.30f, 1.0f);
-            light.range = 6.5f;
-            light.intensity = 2.1f;
+            light.range = 8.0f;
+            light.intensity = 2.5f;
             light.shadows = LightShadows.None;
 
             return go;
         }
 
-        private static Mesh GetAstralVegvisirMesh()
+        /// <summary>
+        /// Extracts SubMesh 0 (pure 3D hand-sculpted Valheim granite monolith with zero metal chains or trophy hook)
+        /// from BossStone_Yagluth / s_stonePrefab, preserving normals, tangents, UVs, and vertex colors for authentic PBR stone shading.
+        /// </summary>
+        private static Mesh GetAstralVegvisirStoneMesh(out bool isBossStoneMonolith)
         {
-            if (s_vegvisirMesh != null) return s_vegvisirMesh;
+            if (s_vegvisirStoneMesh != null)
+            {
+                isBossStoneMonolith = true;
+                return s_vegvisirStoneMesh;
+            }
+
+            try
+            {
+                Mesh srcMesh = null;
+                if (s_stonePrefab != null)
+                {
+                    var bs = s_stonePrefab.GetComponent<BossStone>();
+                    var mf = bs != null && bs.m_mesh != null
+                        ? bs.m_mesh.GetComponent<MeshFilter>()
+                        : s_stonePrefab.GetComponentInChildren<MeshFilter>(true);
+                    if (mf != null) srcMesh = mf.sharedMesh;
+                }
+                if (srcMesh == null) srcMesh = s_customStoneMesh;
+
+                if (srcMesh != null && srcMesh.subMeshCount >= 1)
+                {
+                    Mesh extracted = ExtractSubMeshZero(srcMesh);
+                    if (extracted != null)
+                    {
+                        s_vegvisirStoneMesh = extracted;
+                        isBossStoneMonolith = true;
+                        return s_vegvisirStoneMesh;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log?.LogWarning($"SacrificialStoneManager: Could not extract 3D stone SubMesh 0 for Vegvisir, using fallback stele: {ex.Message}");
+            }
+
+            isBossStoneMonolith = false;
+            return GetFallbackVegvisirMesh();
+        }
+
+        private static Mesh ExtractSubMeshZero(Mesh src)
+        {
+            int[] srcTris = src.GetTriangles(0);
+            if (srcTris == null || srcTris.Length < 3) return null;
+
+            Vector3[] srcVerts = src.vertices;
+            if (srcVerts == null || srcVerts.Length == 0) return null;
+
+            Vector3[] srcNormals = src.normals;
+            Vector4[] srcTangents = src.tangents;
+            Vector2[] srcUv = src.uv;
+            Vector2[] srcUv2 = src.uv2;
+            Color[] srcColors = src.colors;
+
+            bool hasNormals = srcNormals != null && srcNormals.Length == srcVerts.Length;
+            bool hasTangents = srcTangents != null && srcTangents.Length == srcVerts.Length;
+            bool hasUv = srcUv != null && srcUv.Length == srcVerts.Length;
+            bool hasUv2 = srcUv2 != null && srcUv2.Length == srcVerts.Length;
+            bool hasColors = srcColors != null && srcColors.Length == srcVerts.Length;
+
+            var indexMap = new Dictionary<int, int>(256);
+            var newVerts = new List<Vector3>(256);
+            var newNormals = hasNormals ? new List<Vector3>(256) : null;
+            var newTangents = hasTangents ? new List<Vector4>(256) : null;
+            var newUv = hasUv ? new List<Vector2>(256) : null;
+            var newUv2 = hasUv2 ? new List<Vector2>(256) : null;
+            var newColors = hasColors ? new List<Color>(256) : null;
+            var newTris = new int[srcTris.Length];
+
+            for (int i = 0; i < srcTris.Length; i++)
+            {
+                int oldIdx = srcTris[i];
+                if (!indexMap.TryGetValue(oldIdx, out int newIdx))
+                {
+                    newIdx = newVerts.Count;
+                    indexMap[oldIdx] = newIdx;
+                    newVerts.Add(srcVerts[oldIdx]);
+                    if (hasNormals) newNormals.Add(srcNormals[oldIdx]);
+                    if (hasTangents) newTangents.Add(srcTangents[oldIdx]);
+                    if (hasUv) newUv.Add(srcUv[oldIdx]);
+                    if (hasUv2) newUv2.Add(srcUv2[oldIdx]);
+                    if (hasColors) newColors.Add(srcColors[oldIdx]);
+                }
+                newTris[i] = newIdx;
+            }
+
+            var mesh = new Mesh { name = "AurvandilsFylgja_VegvisirStoneMesh" };
+            mesh.SetVertices(newVerts);
+            if (hasNormals) mesh.SetNormals(newNormals);
+            if (hasTangents) mesh.SetTangents(newTangents);
+            if (hasUv) mesh.SetUVs(0, newUv);
+            if (hasUv2) mesh.SetUVs(1, newUv2);
+            if (hasColors) mesh.SetColors(newColors);
+            mesh.SetTriangles(newTris, 0);
+            if (!hasNormals) mesh.RecalculateNormals();
+            if (!hasTangents) mesh.RecalculateTangents();
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
+        private static Mesh GetFallbackVegvisirMesh()
+        {
+            if (s_vegvisirFallbackMesh != null) return s_vegvisirFallbackMesh;
 
             var verts = new List<Vector3>();
             var normals = new List<Vector3>();
             var uvs = new List<Vector2>();
             var tris = new List<int>();
 
+            // Outward-facing Unity clockwise quad (bl -> tl -> tr -> br seen from outside)
             void AddQuad(Vector3 bl, Vector3 br, Vector3 tr, Vector3 tl, Vector2 uvBL, Vector2 uvBR, Vector2 uvTR, Vector2 uvTL)
             {
                 int i = verts.Count;
@@ -1420,8 +1961,8 @@ namespace StandsOfValheim
                 verts.Add(bl); verts.Add(br); verts.Add(tr); verts.Add(tl);
                 normals.Add(n); normals.Add(n); normals.Add(n); normals.Add(n);
                 uvs.Add(uvBL); uvs.Add(uvBR); uvs.Add(uvTR); uvs.Add(uvTL);
-                tris.Add(i); tris.Add(i + 2); tris.Add(i + 1);
                 tris.Add(i); tris.Add(i + 3); tris.Add(i + 2);
+                tris.Add(i); tris.Add(i + 2); tris.Add(i + 1);
             }
 
             void AddBox(float halfW, float y0, float y1, float halfD, float topTaperX, float topTaperZ, bool mapFrontEmblem)
@@ -1444,57 +1985,71 @@ namespace StandsOfValheim
                 Vector2 stoneUV2 = new Vector2(0.10f, 0.10f);
                 Vector2 stoneUV3 = new Vector2(0.02f, 0.10f);
 
-                // Front (+Z) — maps Aurvandil's Fylgja cosmic rune sigil when mapFrontEmblem is true
                 if (mapFrontEmblem)
                 {
                     AddQuad(fbr, fbl, ftl, ftr,
                         new Vector2(0.17f, 0.12f), new Vector2(0.83f, 0.12f),
                         new Vector2(0.83f, 0.90f), new Vector2(0.17f, 0.90f));
-                }
-                else
-                {
-                    AddQuad(fbr, fbl, ftl, ftr, stoneUV0, stoneUV1, stoneUV2, stoneUV3);
-                }
-
-                // Back (-Z) — also display etched sigil subtly so readable from behind
-                if (mapFrontEmblem)
-                {
                     AddQuad(bbl, bbr, btr, btl,
                         new Vector2(0.17f, 0.12f), new Vector2(0.83f, 0.12f),
                         new Vector2(0.83f, 0.90f), new Vector2(0.17f, 0.90f));
                 }
                 else
                 {
+                    AddQuad(fbr, fbl, ftl, ftr, stoneUV0, stoneUV1, stoneUV2, stoneUV3);
                     AddQuad(bbl, bbr, btr, btl, stoneUV0, stoneUV1, stoneUV2, stoneUV3);
                 }
 
-                // Left (-X), Right (+X), Top (+Y)
                 AddQuad(fbl, bbl, btl, ftl, stoneUV0, stoneUV1, stoneUV2, stoneUV3);
                 AddQuad(bbr, fbr, ftr, btr, stoneUV0, stoneUV1, stoneUV2, stoneUV3);
                 AddQuad(ftl, btl, btr, ftr, stoneUV0, stoneUV1, stoneUV2, stoneUV3);
             }
 
-            // Stepped basalt stone plinth + tapered standing rune stele + chiseled apex cap
-            AddBox(halfW: 0.44f, y0: -0.06f, y1: 0.22f, halfD: 0.24f, topTaperX: 0.90f, topTaperZ: 0.88f, mapFrontEmblem: false);
-            AddBox(halfW: 0.34f, y0:  0.22f, y1: 1.38f, halfD: 0.14f, topTaperX: 0.80f, topTaperZ: 0.78f, mapFrontEmblem: true);
-            AddBox(halfW: 0.27f, y0:  1.38f, y1: 1.56f, halfD: 0.11f, topTaperX: 0.36f, topTaperZ: 0.40f, mapFrontEmblem: false);
+            AddBox(halfW: 0.56f, y0: -0.08f, y1: 0.28f, halfD: 0.34f, topTaperX: 0.90f, topTaperZ: 0.88f, mapFrontEmblem: false);
+            AddBox(halfW: 0.44f, y0:  0.28f, y1: 1.85f, halfD: 0.24f, topTaperX: 0.80f, topTaperZ: 0.78f, mapFrontEmblem: true);
+            AddBox(halfW: 0.35f, y0:  1.85f, y1: 2.15f, halfD: 0.19f, topTaperX: 0.36f, topTaperZ: 0.40f, mapFrontEmblem: false);
 
-            s_vegvisirMesh = new Mesh
+            s_vegvisirFallbackMesh = new Mesh
             {
-                name = "AurvandilsFylgja_VegvisirMesh",
+                name = "AurvandilsFylgja_VegvisirFallbackMesh",
                 vertices = verts.ToArray(),
                 normals = normals.ToArray(),
                 uv = uvs.ToArray(),
                 triangles = tris.ToArray()
             };
-            s_vegvisirMesh.RecalculateBounds();
-            return s_vegvisirMesh;
+            s_vegvisirFallbackMesh.RecalculateBounds();
+            return s_vegvisirFallbackMesh;
         }
 
-        private static Material GetAstralVegvisirMaterial()
+        private static Material GetAstralVegvisirMaterial(bool forBossStoneMonolith)
         {
             if (s_vegvisirMaterial != null) return s_vegvisirMaterial;
 
+            // Primary path: clone our real 1024x1024 Valheim weathered mossy granite + normal-mapped
+            // + cosmic-emissive stone material so the 3D Vegvisir monolith looks like genuine Valheim carved stone
+            if (forBossStoneMonolith && s_customStoneMaterial != null)
+            {
+                Material stoneMat = new Material(s_customStoneMaterial)
+                {
+                    name = "AurvandilsFylgja_VegvisirMat"
+                };
+
+                Color vegvisirGlow = new Color(0.85f, 0.50f, 1.15f, 1.0f);
+                if (stoneMat.HasProperty("_EmissionColor"))
+                {
+                    stoneMat.SetColor("_EmissionColor", vegvisirGlow);
+                    stoneMat.EnableKeyword("_EMISSION");
+                }
+                if (stoneMat.HasProperty("_EmissiveColor"))
+                {
+                    stoneMat.SetColor("_EmissiveColor", vegvisirGlow);
+                }
+
+                s_vegvisirMaterial = stoneMat;
+                return s_vegvisirMaterial;
+            }
+
+            // Fallback path if BossStone_Yagluth material was not available
             Shader shader = StandEquipmentBuilder.FindValheimOpaqueShader();
             Material mat = shader != null
                 ? new Material(shader)
@@ -1504,8 +2059,8 @@ namespace StandsOfValheim
             mat.renderQueue = -1;
             mat.color = Color.white;
             if (mat.HasProperty("_Color")) mat.SetColor("_Color", Color.white);
-            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.18f);
-            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.35f);
+            if (mat.HasProperty("_Metallic")) mat.SetFloat("_Metallic", 0.12f);
+            if (mat.HasProperty("_Glossiness")) mat.SetFloat("_Glossiness", 0.28f);
 
             Texture2D srcTex = IconManager.BossStoneTexture;
             if (srcTex != null)
@@ -1513,7 +2068,6 @@ namespace StandsOfValheim
                 mat.mainTexture = srcTex;
                 if (mat.HasProperty("_MainTex")) mat.SetTexture("_MainTex", srcTex);
 
-                // Extract glowing violet & gold runes from bossstone_aurvandilsfylgja.png for crisp dark-tomb emission
                 try
                 {
                     int w = srcTex.width;
@@ -1579,6 +2133,7 @@ namespace StandsOfValheim
     public class AurvandilsFylgjaBossStone : MonoBehaviour
     {
         private BossStone m_bossStone;
+        internal bool GroundVerified;
 
         private void Awake()
         {
@@ -1597,6 +2152,15 @@ namespace StandsOfValheim
             m_bossStone = GetComponent<BossStone>();
             SacrificialStoneManager.ConfigureStoneInstance(gameObject);
             UpdateEmissionAndLight();
+            StartCoroutine(VerifyDeepNorthSurfaceAfterZoneLoad());
+        }
+
+        private IEnumerator VerifyDeepNorthSurfaceAfterZoneLoad()
+        {
+            // Wait briefly for zone TerrainModifiers and locations (e.g. IcePond1) to finish applying
+            yield return new WaitForSeconds(1.0f);
+            if (this == null || gameObject == null) yield break;
+            SacrificialStoneManager.EnsureDeepNorthStoneGroundedAndClear(gameObject, forceLog: true);
         }
 
         public void UpdateEmissionAndLight()
@@ -1650,8 +2214,10 @@ namespace StandsOfValheim
 
         [HarmonyPatch(typeof(ZoneSystem), "SpawnZone")]
         [HarmonyPostfix]
-        private static void ZoneSystem_SpawnZone_Postfix(Vector2s zoneID, ZoneSystem.SpawnMode mode)
+        private static void ZoneSystem_SpawnZone_Postfix(Vector2s zoneID, ZoneSystem.SpawnMode mode, bool __result)
         {
+            if (!__result) return;
+            if (mode == ZoneSystem.SpawnMode.Ghost) return;
             SacrificialStoneManager.OnZoneSpawned(zoneID, mode);
         }
 
@@ -1697,11 +2263,12 @@ namespace StandsOfValheim
                 string resolvedPin = string.IsNullOrEmpty(pinName) ? SacrificialStoneManager.DeepNorthPinName : pinName;
                 ZRoutedRpc.instance.InvokeRoutedRPC(
                     sender,
-                    "DiscoverLocationResponse",
+                    "RPC_DiscoverLocationResponse",
                     resolvedPin,
                     pinType,
                     stonePos,
                     showMap);
+                Plugin.Log?.LogInfo($"SacrificialStoneManager: Sent RPC_DiscoverLocationResponse for '{resolvedPin}' at ({stonePos.x:0.0}, {stonePos.y:0.0}, {stonePos.z:0.0}) to peer {sender}.");
             }
             return false;
         }

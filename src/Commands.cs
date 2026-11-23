@@ -53,7 +53,7 @@ namespace StandsOfValheim
                 }, isCheat: true);
 
             new Terminal.ConsoleCommand("fylgja_stone",
-                "show coordinates of Aurvandil's Fylgja's Deep North Sacrificial Stone and nearest Lord Reto's Tomb (add 'pin' to pin the stone on your map)", args =>
+                "show coordinates & live status of Aurvandil's Fylgja's Deep North Sacrificial Stone and nearest Lord Reto's Tomb (subcommands: 'pin', 'fix')", args =>
                 {
                     HandleStoneCommand(args, startIndex: 1);
                 }, isCheat: true);
@@ -95,12 +95,25 @@ namespace StandsOfValheim
 
         private static void HandleStoneCommand(Terminal.ConsoleEventArgs args, int startIndex)
         {
-            bool pin = args.Length > startIndex &&
-                       string.Equals(args[startIndex], "pin", StringComparison.OrdinalIgnoreCase);
+            string sub = args.Length > startIndex ? args[startIndex].Trim().ToLowerInvariant() : string.Empty;
+            bool pin = sub == "pin";
+            bool fix = sub == "fix" || sub == "respawn" || sub == "ground";
+
+            if (fix)
+            {
+                args.Context.AddString(SacrificialStoneManager.ForceFixOrSpawnDeepNorthStone());
+            }
 
             if (SacrificialStoneManager.TryResolveDeepNorthStonePosition(out Vector3 stonePos))
             {
-                args.Context.AddString($"Aurvandil's Fylgja Deep North Sacrificial Stone: ({stonePos.x:0}, {stonePos.y:0}, {stonePos.z:0}) [goto {stonePos.x:0} {stonePos.z:0}]");
+                string distStr = "";
+                if (Player.m_localPlayer != null)
+                {
+                    float d = Vector3.Distance(Player.m_localPlayer.transform.position, stonePos);
+                    distStr = $", dist={d:0.0}m";
+                }
+                args.Context.AddString($"Aurvandil's Fylgja Deep North Sacrificial Stone: ({stonePos.x:0}, {stonePos.y:0}, {stonePos.z:0}{distStr}) [goto {stonePos.x:0} {stonePos.z:0}]");
+                args.Context.AddString($"Stone Status: {SacrificialStoneManager.GetDeepNorthStoneDiagnostics()}");
                 if (pin && Game.instance != null && Player.m_localPlayer != null)
                 {
                     Game.instance.DiscoverClosestLocation(
