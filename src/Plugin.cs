@@ -17,11 +17,12 @@ namespace StandsOfValheim
     {
         public const string Guid = "grosales.StandsOfValheim";
         public const string Name = "Valheim Fylgja";
-        public const string Version = "0.2.1";
+        public const string Version = "0.2.2";
 
         internal static ManualLogSource Log;
         public static ConfigEntry<FylgjaModelStyle> ModelStyleConfig { get; private set; }
         public static ConfigEntry<float> ModelOpacityConfig { get; private set; }
+        public static ConfigEntry<float> SinglePunchBaseDamageConfig { get; private set; }
         public static ConfigEntry<float> BarrageCooldownConfig { get; private set; }
         public static ConfigEntry<float> BarrageDamageMultiplierConfig { get; private set; }
 
@@ -30,6 +31,9 @@ namespace StandsOfValheim
 
         public static float ModelOpacity =>
             ModelOpacityConfig != null ? Mathf.Clamp(ModelOpacityConfig.Value, 0.20f, 1.00f) : 0.72f;
+
+        public static float SinglePunchBaseDamage =>
+            SinglePunchBaseDamageConfig != null ? Mathf.Clamp(SinglePunchBaseDamageConfig.Value, 10.0f, 500.0f) : 120.0f;
 
         public static float BarrageCooldownSeconds =>
             BarrageCooldownConfig != null ? Mathf.Max(0.5f, BarrageCooldownConfig.Value) : 6.0f;
@@ -55,6 +59,14 @@ namespace StandsOfValheim
                     "Spectral opacity of Aurvandil's Fylgja (0.20 = very ghostly translucent, 0.72 = default astral spirit transparency, 1.00 = fully opaque).",
                     new AcceptableValueRange<float>(0.20f, 1.00f)));
 
+            SinglePunchBaseDamageConfig = Config.Bind(
+                "Combat",
+                "SinglePunchBaseDamage",
+                120.0f,
+                new ConfigDescription(
+                    "Base blunt damage for Aurvandil's Fylgja's single punch (Left Mouse Button) before Unarmed skill scaling (0.55 minimum factor), active buffs, and the 1.5x 3rd-hit combo finisher.",
+                    new AcceptableValueRange<float>(10.0f, 500.0f)));
+
             BarrageCooldownConfig = Config.Bind(
                 "Combat",
                 "BarrageCooldown",
@@ -68,7 +80,7 @@ namespace StandsOfValheim
                 "BarrageDamageMultiplier",
                 4.0f,
                 new ConfigDescription(
-                    "Dynamic damage multiplier applied to the player's normal unarmed punch damage for every hit of the 12-hit Astral Barrage (default 4.0 = 4x player unarmed damage per hit).",
+                    "Damage multiplier applied to the 35-blunt barrage base for every hit of the 12-hit Astral Barrage before Unarmed skill scaling (0.55 minimum factor) and active buffs (default 4.0 = 140 base blunt per hit).",
                     new AcceptableValueRange<float>(0.5f, 20.0f)));
 
             ModelStyleConfig.SettingChanged += (_, __) =>

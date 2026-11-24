@@ -74,8 +74,12 @@ namespace StandsOfValheim
         private bool _isPlayingIntroGPower = false;
         private float _introGPowerTimer = 0f;
 
-        // Barrage tuning (Hit-limited: 12 rapid punches per trigger, dynamic 4x player unarmed damage & half Demolisher stagger/knockback)
+        // Shared Unarmed skill factor floor so Deep North players without leveled Unarmed still hit reliably (scales up to 1.00 at Unarmed 100)
+        private const float MinUnarmedSkillFactor = 0.55f;
+
+        // Barrage tuning (Hit-limited: 12 rapid punches per trigger, 35 blunt base * BarrageDamageMultiplier scaled by Unarmed skill & buffs, 0.75x/1.5x stagger, half Demolisher knockback)
         public const int MaxPunchesPerBarrage = 12;
+        private const float BarrageBaseBluntDamage = 35f;
         private const float BarrageStaminaCost = 16f;
         private const float BarrageDuration = 1.48f;
         private const float BarrageFirstHitDelay = 0.03f;
@@ -85,8 +89,16 @@ namespace StandsOfValheim
         private const float BarrageAnimStartNormalized = 0.22f;
         private const float BarrageVfxInterval = 0.025f;
         private const float DefaultBarrageCooldown = 6.0f;
+        private const float BarrageHitStaggerMultiplier = 0.75f;
+        private const float BarrageFinisherStaggerMultiplier = 1.50f;
 
-        // Single-punch tuning (1 hit, fast left-click trigger)
+        // Single-punch tuning (1 hit, fast left-click trigger, 120 blunt default base scaled by Unarmed skill & buffs, 1.5x 3rd-hit combo finisher)
+        private const float DefaultSinglePunchBaseBluntDamage = 120f;
+        private const float SinglePunchFinisherDamageMultiplier = 1.5f;
+        private const float SinglePunchHitPushForce = 18f;
+        private const float SinglePunchFinisherPushForce = 30f;
+        private const float SinglePunchHitStaggerMultiplier = 1.0f;
+        private const float SinglePunchFinisherStaggerMultiplier = 1.5f;
         private const float SinglePunchStaminaCost = 5f;
         private const float SinglePunchDuration = 0.34f;
         private const float SinglePunchHitDelay = 0.10f;
@@ -107,9 +119,8 @@ namespace StandsOfValheim
         private float _barrageCooldownTimer = 0f;
         private StandBarrageVfx _barrageVfx;
 
-        // Cached half-Demolisher knockback & stagger tuning
+        // Cached half-Demolisher knockback tuning
         private static bool s_resolvedDemolisherStats = false;
-        private static float s_halfDemolisherStaggerTotal = 145f;
         private static float s_barrageHitPushForce = 2.5f;
         private static float s_barrageFinisherPushForce = 16f;
 
@@ -118,6 +129,7 @@ namespace StandsOfValheim
         private int _punchChainLevels = 3;
         private int _barragePunchIndex = 0;
         private int _singleComboIndex = 0;
+        private int _activeSingleComboIndex = 0;
         private float _lastSinglePunchTime = -10f;
         private string _lastTrigger = null;
 
@@ -407,7 +419,7 @@ namespace StandsOfValheim
                     MessageHud.instance.ShowMessage(MessageHud.MessageType.TopLeft, "★ AURVANDIL'S FYLGJA: ORA ORA ORA! ★");
                 }
 
-                Plugin.Log?.LogInfo($"Aurvandil's Fylgja: 12-hit ORA barrage activated ({Plugin.BarrageDamageMultiplier:0.##}x dynamic player unarmed damage per hit)!");
+                Plugin.Log?.LogInfo($"Aurvandil's Fylgja: 12-hit ORA barrage activated ({BarrageBaseBluntDamage * Plugin.BarrageDamageMultiplier:0.#} base blunt per hit, {Plugin.BarrageDamageMultiplier:0.##}x multiplier)!");
             }
             else
             {
@@ -421,6 +433,7 @@ namespace StandsOfValheim
                 }
 
                 int comboIdx = _singleComboIndex;
+                _activeSingleComboIndex = comboIdx;
                 _singleComboIndex = (_singleComboIndex + 1) % Mathf.Max(1, _punchChainLevels);
 
                 TriggerPunchAnim(SinglePunchAnimSpeed, comboIdx);
@@ -565,8 +578,11 @@ namespace StandsOfValheim
 
                     EnsureDemolisherHalfStatsResolved();
 
-                    HitData.DamageTypes dynamicDmg = ComputeDynamicPlayerPunchDamage(Plugin.BarrageDamageMultiplier, out Skills.SkillType skillType);
-                    float dynamicStaggerMult = ComputeDynamicBarrageStaggerMultiplier(dynamicDmg, isFinisher);
+                    HitData.DamageTypes dynamicDmg = ComputeDynamicStandPunchDamage(
+                        BarrageBaseBluntDamage,
+                        Plugin.BarrageDamageMultiplier,
+                        out Skills.SkillType skillType);
+                    float staggerMult = isFinisher ? BarrageFinisherStaggerMultiplier : BarrageHitStaggerMultiplier;
 
                     PlayNormalPunchSwingSound();
 
@@ -574,7 +590,7 @@ namespace StandsOfValheim
                         damage: dynamicDmg,
                         skillType: skillType,
                         pushForce: isFinisher ? s_barrageFinisherPushForce : s_barrageHitPushForce,
-                        staggerMultiplier: dynamicStaggerMult,
+                        staggerMultiplier: staggerMult,
                         skillRaiseAmount: 0.20f);
 
                     Vector3 ringPos = transform.position + transform.up * 1.32f + transform.forward * 1.30f;
@@ -593,14 +609,30 @@ namespace StandsOfValheim
                 if (Time.time >= _nextPunchDamageTime && _punchesRemaining > 0)
                 {
                     _punchesRemaining--;
+                    bool isComboFinisher = _punchChainLevels > 1 && _activeSingleComboIndex == _punchChainLevels - 1;
+                    float singleBase = Plugin.SinglePunchBaseDamage > 0f
+                        ? Plugin.SinglePunchBaseDamage
+                        : DefaultSinglePunchBaseBluntDamage;
+                    float comboMult = isComboFinisher ? SinglePunchFinisherDamageMultiplier : 1.0f;
+
+                    HitData.DamageTypes singleDmg = ComputeDynamicStandPunchDamage(
+                        singleBase,
+                        comboMult,
+                        out Skills.SkillType skillType);
+
                     PlayNormalPunchSwingSound();
-                    var singleDmg = new HitData.DamageTypes { m_blunt = 35f };
                     PerformPunchHit(
                         damage: singleDmg,
-                        skillType: Skills.SkillType.Unarmed,
-                        pushForce: 18f,
-                        staggerMultiplier: 1.0f,
+                        skillType: skillType,
+                        pushForce: isComboFinisher ? SinglePunchFinisherPushForce : SinglePunchHitPushForce,
+                        staggerMultiplier: isComboFinisher ? SinglePunchFinisherStaggerMultiplier : SinglePunchHitStaggerMultiplier,
                         skillRaiseAmount: 1.0f);
+
+                    if (isComboFinisher)
+                    {
+                        Vector3 ringPos = transform.position + transform.up * 1.32f + transform.forward * 1.25f;
+                        _barrageVfx?.SpawnShockRing(ringPos, transform.forward, 1.15f);
+                    }
                 }
             }
 
@@ -770,39 +802,31 @@ namespace StandsOfValheim
         }
 
         /// <summary>
-        /// Dynamically computes the exact damage the owner would deal with a normal unarmed punch
-        /// (PlayerUnarmed base damage * attack multiplier * Unarmed random skill factor * active StatusEffects),
-        /// scaled by <paramref name="multiplier"/> (e.g. 4.0x for barrage hits).
+        /// Dynamically computes stand punch damage starting from <paramref name="baseBluntDamage"/>
+        /// (base blunt * unarmed attack multiplier * Unarmed random skill factor [floored at 0.55] * active StatusEffects),
+        /// scaled by <paramref name="multiplier"/> (e.g. 1.0x / 1.5x for single punches, 4.0x for barrage hits).
         /// </summary>
-        private HitData.DamageTypes ComputeDynamicPlayerPunchDamage(float multiplier, out Skills.SkillType skillType)
+        private HitData.DamageTypes ComputeDynamicStandPunchDamage(float baseBluntDamage, float multiplier, out Skills.SkillType skillType)
         {
             skillType = Skills.SkillType.Unarmed;
-            HitData.DamageTypes dmg = default;
+            var dmg = new HitData.DamageTypes { m_blunt = Mathf.Max(1f, baseBluntDamage) };
             float attackDmgMult = 1.0f;
 
             var unarmedItem = Owner != null && Owner.m_unarmedWeapon != null
                 ? Owner.m_unarmedWeapon.m_itemData
                 : null;
 
-            if (unarmedItem != null)
+            if (unarmedItem != null && unarmedItem.m_shared != null)
             {
-                dmg = unarmedItem.GetDamage();
-                if (unarmedItem.m_shared != null)
+                skillType = unarmedItem.m_shared.m_skillType;
+                if (unarmedItem.m_shared.m_attack != null && unarmedItem.m_shared.m_attack.m_damageMultiplier > 0f)
                 {
-                    skillType = unarmedItem.m_shared.m_skillType;
-                    if (unarmedItem.m_shared.m_attack != null && unarmedItem.m_shared.m_attack.m_damageMultiplier > 0f)
-                    {
-                        attackDmgMult = unarmedItem.m_shared.m_attack.m_damageMultiplier;
-                    }
+                    attackDmgMult = unarmedItem.m_shared.m_attack.m_damageMultiplier;
                 }
             }
 
-            if (!dmg.HaveDamage())
-            {
-                dmg.m_blunt = 5f;
-            }
-
-            float skillFactor = Owner != null ? Owner.GetRandomSkillFactor(skillType) : 0.5f;
+            float rawSkillFactor = Owner != null ? Owner.GetRandomSkillFactor(skillType) : MinUnarmedSkillFactor;
+            float skillFactor = Mathf.Max(MinUnarmedSkillFactor, rawSkillFactor);
             dmg.Modify(attackDmgMult * skillFactor);
 
             if (Owner != null && Owner.GetSEMan() != null)
@@ -818,17 +842,6 @@ namespace StandsOfValheim
 
             dmg.Modify(Mathf.Max(0.1f, multiplier));
             return dmg;
-        }
-
-        private static float ComputeDynamicBarrageStaggerMultiplier(HitData.DamageTypes hitDamage, bool isFinisher)
-        {
-            // Boost cumulative barrage stagger (~1.35x half-Demolisher raw, offsetting 1.3s stagger decay)
-            // so a full 12-hit barrage reliably staggers tough foes, with a heavier 2.0x finisher.
-            float staggerBase = Mathf.Max(4f, hitDamage.GetTotalStaggerDamage());
-            float targetTotalStagger = s_halfDemolisherStaggerTotal * 1.35f;
-            float perHitStaggerTarget = targetTotalStagger / (MaxPunchesPerBarrage + 1f);
-            float baseMult = Mathf.Clamp(perHitStaggerTarget / staggerBase, 0.45f, 2.4f);
-            return isFinisher ? baseMult * 2.0f : baseMult;
         }
 
         private void PlayNormalPunchSwingSound()
@@ -976,24 +989,15 @@ namespace StandsOfValheim
                         : 1f;
                     float demAttackForce = Mathf.Max(20f, shared.m_attackForce * forceMult);
 
-                    float demStaggerMult = (shared.m_attack != null && shared.m_attack.m_staggerMultiplier > 0f)
-                        ? shared.m_attack.m_staggerMultiplier
-                        : 1f;
-                    float demBlunt = Mathf.Max(50f, shared.m_damages.m_blunt);
-
-                    // Target: total stagger across all 12 barrage hits equals half of a single Demolisher hit's stagger
-                    s_halfDemolisherStaggerTotal = 0.5f * demBlunt * demStaggerMult;
-
-                    // Target: knockback effect is half of Demolisher
+                    // Target: knockback effect is half of Demolisher.
                     // Keep hits 1..11 low so targets stay in range, and put the main knockback on the 12th finisher.
                     float halfDemolisherForce = 0.5f * demAttackForce;
                     s_barrageHitPushForce = Mathf.Clamp(halfDemolisherForce * 0.05f, 1.5f, 2.5f);
                     s_barrageFinisherPushForce = Mathf.Clamp(halfDemolisherForce * 0.32f, 10f, 25f);
 
                     Plugin.Log?.LogInfo(
-                        $"StandFollower: Calibrated barrage to half Demolisher stats " +
-                        $"(Demolisher blunt={demBlunt}, force={demAttackForce}, staggerMult={demStaggerMult} -> " +
-                        $"halfStaggerTotal={s_halfDemolisherStaggerTotal:0.#}, hitForce={s_barrageHitPushForce:0.##}, finisherForce={s_barrageFinisherPushForce:0.##}).");
+                        $"StandFollower: Calibrated barrage knockback to half Demolisher " +
+                        $"(Demolisher force={demAttackForce} -> hitForce={s_barrageHitPushForce:0.##}, finisherForce={s_barrageFinisherPushForce:0.##}).");
                 }
             }
             catch (System.Exception ex)

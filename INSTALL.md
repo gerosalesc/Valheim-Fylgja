@@ -81,8 +81,8 @@ Valheim requires **BepInEx** to load mods. Choose one of the two options below:
 2. **Hands-Free Requirement:**  
    Keep your **hands free** (no weapon, shield, or tool equipped in either hand; press **`R`** to sheathe). While holding any weapon, shield, or tool, your normal player attacks and blocks work as usual.
 3. **Unarmed Fylgja Actions (With Hands Free):**
-   - **Left Mouse Button (Single Punch):** Fast single Fylgja punch (`5` stamina, `35` blunt damage, `18` knockback force, `1.0x` stagger multiplier, 3-step combo chain, normal unarmed punch sound).
-   - **Middle Mouse Button (12-Hit Astral Barrage):** Rapid **12-hit punch barrage** (`16` stamina, **`6.0s` cooldown**). Each hit dynamically deals **`4x` the player's normal unarmed punch damage** (scaling with your `Unarmed` skill level, `PlayerUnarmed` stats, and active buffs; configurable via `BarrageDamageMultiplier`), plays both the looping `ora_barrage.wav` audio and Valheim's normal punch swing and impact sounds on **every hit**, trains your `Unarmed` skill on hits, builds stronger cumulative stagger (`~1.35x` half-Demolisher with a `2x` finisher stagger), and keeps knockback at **half of the Demolisher** (`SledgeDemolisher`).
+   - **Left Mouse Button (Single Punch):** Fast single Fylgja punch (`5` stamina, `120` base blunt damage configurable via `SinglePunchBaseDamage`, dynamically scaled by `Unarmed` skill with a `0.55` minimum factor and active buffs). Uses a 3-step combo chain: hits 1–2 deal `1.0x` damage / `1.0x` stagger / `18` knockback; the **3rd-hit combo finisher** deals **`1.5x` damage, `1.5x` stagger, `30` knockback**, and triggers an impact shockwave ring.
+   - **Middle Mouse Button (12-Hit Astral Barrage):** Rapid **12-hit punch barrage** (`16` stamina, **`6.0s` cooldown**). Each hit dynamically deals **`4x`** the `35`-blunt barrage base (`140` base blunt per hit, scaled by your `Unarmed` skill with a `0.55` minimum factor and active buffs; configurable via `BarrageDamageMultiplier`), plays both the looping `ora_barrage.wav` audio and Valheim's normal punch swing and impact sounds on **every hit**, trains your `Unarmed` skill on hits, applies **`0.75x` stagger per hit** with a **`1.5x` stagger finisher** on hit 12, and keeps knockback at **half of the Demolisher** (`SledgeDemolisher`).
    - **Hold Right Mouse Button (Fylgja Shield Guard & 6x Parry):** Moves Aurvandil's Fylgja directly in front of you in a guard stance.
      - **Standard Guard:** Blocks incoming hits with **`2x`** your player body armor (scaled up to `+50%` with your **Blocking** skill).
      - **Timed Parry (`< 0.25s` before impact):** Parries incoming attacks with **`6x`** your player body armor (scaled with your **Blocking** skill), staggering the attacker and knocking them back.
@@ -117,13 +117,19 @@ Open `Valheim\BepInEx\config\grosales.StandsOfValheim.cfg` in any text editor (c
 ```ini
 [Combat]
 
+## Base blunt damage for Aurvandil's Fylgja's single punch (Left Mouse Button) before Unarmed skill scaling (0.55 minimum factor), active buffs, and the 1.5x 3rd-hit combo finisher.
+# Setting type: Single
+# Default value: 120
+# Acceptable value range: From 10 to 500
+SinglePunchBaseDamage = 120
+
 ## Cooldown in seconds between 12-hit Astral Barrage (Middle Mouse Button) activations.
 # Setting type: Single
 # Default value: 6
 # Acceptable value range: From 0.5 to 60
 BarrageCooldown = 6
 
-## Dynamic damage multiplier applied to the player's normal unarmed punch damage for every hit of the 12-hit Astral Barrage (default 4.0 = 4x player unarmed damage per hit).
+## Damage multiplier applied to the 35-blunt barrage base for every hit of the 12-hit Astral Barrage before Unarmed skill scaling (0.55 minimum factor) and active buffs (default 4.0 = 140 base blunt per hit).
 # Setting type: Single
 # Default value: 4
 # Acceptable value range: From 0.5 to 20

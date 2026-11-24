@@ -1,6 +1,6 @@
 # Valheim Fylgja (`StandsOfValheim`)
 
-A **BepInEx** mod for **Valheim** (`v0.2.1`) that introduces summonable **Fylgja** astral guardian spirits integrated natively as **Forsaken Powers**. Currently featuring: **Aurvandil's Fylgja**.
+A **BepInEx** mod for **Valheim** (`v0.2.2`) that introduces summonable **Fylgja** astral guardian spirits integrated natively as **Forsaken Powers**. Currently featuring: **Aurvandil's Fylgja**.
 
 For step-by-step Windows setup, multiplayer rules, configuration, and in-game usage, see the [Installation & Usage Guide (INSTALL.md)](INSTALL.md).
 
@@ -49,8 +49,8 @@ For step-by-step Windows setup, multiplayer rules, configuration, and in-game us
 | Action | Input (Hands Free) | Stamina Cost | Damage & Properties |
 | :--- | :--- | :--- | :--- |
 | **Summon Fylgja** | **`F`** (Forsaken Power Key) | `0` | **5m** (`300s`) duration, **10m** (`600s`) cooldown, **`+100` Carry Weight** while active |
-| **Fylgja Single Punch** | **Left Mouse Button** | `5` Stamina | **`35` Blunt Damage**, `18` push force, `1.0x` stagger multiplier (`0.34s` duration, 3-hit combo chain, normal unarmed punch swing & hit sounds) |
-| **Astral Barrage (12 Hits)** | **Middle Mouse Button** | `16` Stamina<br>*(6.0s Cooldown)* | **Dynamic Damage:** **`4x`** the player's normal unarmed punch damage per hit (scales dynamically with `PlayerUnarmed` damage, `Unarmed` skill level, and active status effects; configurable via `BarrageDamageMultiplier`).<br>Plays both the looping `ora_barrage.wav` audio and Valheim's normal punch swing & impact sound on **every hit**, trains `Unarmed` skill on hits, applies boosted cumulative stagger (`~1.35x` half-Demolisher across 12 hits with a `2x` stagger finisher), and keeps knockback calibrated to **50% of the Demolisher** (`SledgeDemolisher`). |
+| **Fylgja Single Punch** | **Left Mouse Button** | `5` Stamina | **`120` Base Blunt Damage** (configurable via `SinglePunchBaseDamage`), scaled dynamically by `Unarmed` skill (`0.55` min factor up to `1.00` at level 100) and active status effects.<br>`0.34s` duration (`0.40s` cadence), 3-hit combo chain: hits 1–2 deal `1.0x` damage / `1.0x` stagger / `18` knockback; **3rd-hit combo finisher** deals **`1.5x` damage, `1.5x` stagger, `30` knockback**, and emits an impact shockwave ring. |
+| **Astral Barrage (12 Hits)** | **Middle Mouse Button** | `16` Stamina<br>*(6.0s Cooldown)* | **Dynamic Damage:** **`4x`** the `35`-blunt barrage base (`140` base blunt per hit, configurable via `BarrageDamageMultiplier`), scaled dynamically by `Unarmed` skill (`0.55` min factor up to `1.00` at level 100) and active status effects.<br>Plays both the looping `ora_barrage.wav` audio and Valheim's normal punch swing & impact sound on **every hit**, trains `Unarmed` skill on hits, applies **`0.75x` stagger per hit** with a **`1.5x` stagger finisher** on hit 12, and keeps knockback calibrated to **50% of the Demolisher** (`SledgeDemolisher`). |
 | **Fylgja Shield Guard** | **Hold Right Mouse Button** | Block drain | Moves Fylgja in front of you in a crossed-arm guard stance.<br>**Base Block Armor:** **`2x`** player body armor $\times (1 + 0.5 \times \text{BlockingSkillFactor})$ |
 | **Fylgja Timed Parry** | **Right Mouse Button** (`< 0.25s` before hit) | Parry drain | **Parry Block Armor:** **`6x`** player body armor $\times (1 + 0.5 \times \text{BlockingSkillFactor})$<br>Staggers the attacker, triggers parry sparks, and applies `50` deflection knockback |
 
@@ -93,13 +93,19 @@ After launching Valheim once with the mod installed, BepInEx creates `Valheim/Be
 ```ini
 [Combat]
 
+## Base blunt damage for Aurvandil's Fylgja's single punch (Left Mouse Button) before Unarmed skill scaling (0.55 minimum factor), active buffs, and the 1.5x 3rd-hit combo finisher.
+# Setting type: Single
+# Default value: 120
+# Acceptable value range: From 10 to 500
+SinglePunchBaseDamage = 120
+
 ## Cooldown in seconds between 12-hit Astral Barrage (Middle Mouse Button) activations.
 # Setting type: Single
 # Default value: 6
 # Acceptable value range: From 0.5 to 60
 BarrageCooldown = 6
 
-## Dynamic damage multiplier applied to the player's normal unarmed punch damage for every hit of the 12-hit Astral Barrage (default 4.0 = 4x player unarmed damage per hit).
+## Damage multiplier applied to the 35-blunt barrage base for every hit of the 12-hit Astral Barrage before Unarmed skill scaling (0.55 minimum factor) and active buffs (default 4.0 = 140 base blunt per hit).
 # Setting type: Single
 # Default value: 4
 # Acceptable value range: From 0.5 to 20
@@ -159,7 +165,7 @@ StandsOfValheim/
 │   ├── icon_aurvandilsfylgja.png               # Forsaken Power HUD & sacrificial stone icon
 │   └── ora_barrage.wav                         # 12-hit astral barrage spatial audio clip
 ├── src/
-│   ├── Plugin.cs                               # BepInEx entry point, version metadata & ModelStyle / ModelOpacity / BarrageCooldown configs
+│   ├── Plugin.cs                               # BepInEx entry point, version metadata & Visuals / Combat configs
 │   ├── SE_AurvandilsFylgja.cs                  # SE_Stats Forsaken Power (5m active, 10m cooldown, +100 carry weight)
 │   ├── SacrificialStoneManager.cs              # Random Deep North monolith, legacy StartTemple cleanup & Lord Reto's Tomb Vegvisir
 │   ├── StandManager.cs                         # Summon/dismiss lifecycle, hands-free check & attack/block dispatch
